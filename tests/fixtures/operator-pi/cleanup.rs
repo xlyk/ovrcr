@@ -431,7 +431,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                 "Ready, a title",
                 "completion trailer",
                 "archive stopped record",
-                "stop live Agent, then archive record",
+                "Live sessions require a separate explicit session-care stop request",
                 "remove Workspace checkout",
                 "including archived rows",
                 "provider-history location unverified",
@@ -444,6 +444,10 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                     "missing cleanup rule: {required}"
                 );
             }
+            assert!(
+                !instructions.contains("stop live Agent, then archive record"),
+                "cleanup must not propose combined live stop-and-archive"
+            );
             Plan::tool(
                 "cleanup-watches",
                 "watch_sessions",
@@ -535,7 +539,7 @@ pub(super) fn plan(body: &Value, step: usize) -> Plan {
                 } else if matches!(row["phase"].as_str(), Some("stopped" | "exited")) {
                     "propose archive stopped record"
                 } else {
-                    "review required before proposing stop live Agent, then archive record"
+                    "live session; preserve; separate session-care stop request required"
                 };
                 let workspace = inventory["workspaces"]
                     .as_array()
@@ -1018,7 +1022,7 @@ fn cleanup_case(archive: bool) {
             }
             assert!(
                 line_for(idle).contains(
-                    "review required before proposing stop live Agent, then archive record"
+                    "live session; preserve; separate session-care stop request required"
                 )
             );
             let ready = protected[2].0;

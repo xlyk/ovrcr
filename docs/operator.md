@@ -207,8 +207,8 @@ to narrow the scope. The default review filter is 24 hours since Last activity
 stay unknown, and age is not proof of completion.
 
 The proposal names exact resources and session runs, observations, ages, effects
-and blockers. It separates stopped-record archive, reviewed idle live Agent
-stop-and-archive, and separately approved Workspace removal. Busy, paused,
+and blockers. It separates stopped-record archive from separately approved
+Workspace removal. Live sessions stay unchanged. Busy, paused,
 Unread, WaitingInput, watched, task-owned and uncertain work stays protected;
 Operator conversations are excluded. Dirty or occupied checkouts, Root, active
 tasks and provider-history dependencies block Workspace removal. Unmerged or
@@ -230,10 +230,10 @@ files refuse even with automatic WIP saving on: cleanup never saves, pushes or
 forces removal. Branches and archived original context stay. Git/registry partial
 failures preserve recovery records and report actual state rather than rollback.
 
-Live-Agent stop-and-archive still reports **Cleanup execution unavailable**.
-Archive approval cannot stop processes, acknowledge ownership, delete records or
-remove checkout files. No periodic check is started. A precise, separate request
-to close a named session retains session care's existing controls.
+To reclaim a live Agent, first make a separate explicit session-care stop request.
+After it stops, request cleanup and separately approve archival of the eligible
+record. Archive approval cannot stop processes, acknowledge ownership, delete
+records or remove checkout files. No periodic check is started.
 
 ## Coordinate Workspace sessions
 

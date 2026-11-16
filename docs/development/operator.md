@@ -133,8 +133,10 @@ protection still block. Read-only preview and removal share the existing Root,
 Git identity and retained provider-history checks. Strict removal bypasses WIP
 publication, force and task-ownership release; ordinary removal is unchanged.
 Missing checkouts refuse strict replay, preserving partial-failure evidence.
-Live stop-and-archive remains unavailable; no generic close/remove fallback is
-permitted. `terminal list --json` exposes the existing content-free
+Live targets stay unchanged: stopping requires separate explicit session care,
+then stopped-state inspection and separate archive approval. Cleanup has no
+combined live stop-and-archive action or generic close/remove fallback.
+`terminal list --json` exposes the existing content-free
 `assignment_control` view when available; its absence is not proof that work is
 unowned. Inventory does not expose provider-history paths; the read-only Server
 preview checks retained references, while other unverifiable history remains a

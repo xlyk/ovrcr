@@ -13,8 +13,8 @@ no source checkout or personal skill installation is required.
 
 General cleanup is proposal-first: inspect, return exact proposed effects and
 wait for approval. **Archive stopped record** and separately approved **remove
-Workspace checkout** can execute. Live-Agent stop-and-archive remains **Cleanup
-execution unavailable**. Never substitute generic close, kill, remove, ownership
+Workspace checkout** can execute. For live targets, report **Cleanup execution
+unavailable** and preserve them. Never substitute generic close, kill, remove, ownership
 acknowledgement, Git cleanup or task cleanup for guarded execution. A separate
 direct instruction to close a named session belongs to `ovrcr-session-care`.
 Skill selection grants no authority.
@@ -79,12 +79,13 @@ For each candidate, list all applicable protections before considering an effect
 
 Only an otherwise unblocked stopped record with resolved ownership can have the
 proposed effect **archive stopped record** (hide from the active list, preserve
-its Retained record and provider history). For an otherwise unblocked live Agent,
-inspect the relevant reply using the provider-supported path in
-`ovrcr-session-care`, verify review and idle evidence, and label the distinct
-proposed effect **stop live Agent, then archive record**. A running Terminal is
-not an idle Agent; leave it for an explicit session-control request. Unknown or
-missing review/ownership evidence stays a blocker, not implicit approval.
+its Retained record and provider history).
+
+Live sessions require a separate explicit session-care stop request. Preserve
+running Agents and Terminals rather than proposing cleanup actions for them.
+After that separate control completes, inspect the stopped record again and
+obtain separate archive approval if it is eligible. Unknown or missing
+review/ownership evidence stays a blocker, not implicit approval.
 
 ## 3. Inspect Workspace candidates separately
 
