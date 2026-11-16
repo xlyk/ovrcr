@@ -23,6 +23,8 @@
 // of it, so what one suite never calls is not dead.
 #![allow(dead_code)]
 
+#[path = "agy_quota.rs"]
+pub mod agy_quota;
 #[path = "claude_auth.rs"]
 pub mod claude_auth;
 #[path = "deadline.rs"]
@@ -95,6 +97,9 @@ pub struct Live {
     /// never the developer's: first on the binary adapter's PATH, and named by
     /// the thread adapter's settings document.
     pub claude: claude_auth::ClaudeAuth,
+    /// Hermetic `agy` stand-in for `/usage` quota checks, placed on PATH ahead
+    /// of ambient directories without polluting `claude-auth-fixture`.
+    pub agy: agy_quota::AgyQuota,
     host: Mutex<Host>,
     pgids: Mutex<Vec<libc::pid_t>>,
     ready: Mutex<Option<String>>,
@@ -124,6 +129,9 @@ impl Live {
         let bin = root.path().join("claude-auth-fixture");
         std::fs::create_dir(&bin).unwrap();
         let claude = claude_auth::ClaudeAuth::install(&bin);
+        let agy_bin = root.path().join("agy-quota-fixture");
+        std::fs::create_dir(&agy_bin).unwrap();
+        let agy = agy_quota::AgyQuota::install(&agy_bin);
         Self {
             repo: repo.canonicalize().unwrap(),
             workspace_root: workspace_root.canonicalize().unwrap(),
@@ -135,6 +143,7 @@ impl Live {
             executable: PathBuf::from(env!("CARGO_BIN_EXE_ovrcr")),
             home: None,
             claude,
+            agy,
             host: Mutex::new(Host::Idle),
             pgids: Mutex::new(Vec::new()),
             ready: Mutex::new(None),
@@ -194,9 +203,12 @@ impl Live {
         command
     }
 
-    /// PATH with the fixture's `claude` first.
+    /// PATH with the fixture's `claude` and `agy` ahead of ambient directories.
     pub fn path(&self) -> std::ffi::OsString {
-        let mut paths = vec![self.claude.command.parent().unwrap().to_path_buf()];
+        let mut paths = vec![
+            self.claude.command.parent().unwrap().to_path_buf(),
+            self.agy.command.parent().unwrap().to_path_buf(),
+        ];
         paths.extend(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
         ));
@@ -267,8 +279,9 @@ impl Live {
             std::fs::write(
                 &document,
                 format!(
-                    "agents = [{{ name = \"claude\", argv = [{}] }}]\n[quota]\nenabled = false\n",
-                    toml::Value::String(self.claude.command.display().to_string())
+                    "agents = [{{ name = \"claude\", argv = [{}] }}]\n[quota]\nenabled = false\n[quota.agy]\ncommand = {}\n",
+                    toml::Value::String(self.claude.command.display().to_string()),
+                    toml::Value::String(self.agy.command.display().to_string()),
                 ),
             )
             .unwrap();

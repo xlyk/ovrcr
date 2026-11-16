@@ -183,6 +183,24 @@ impl Supervisor {
             .collect()
     }
 
+    /// Published Quota observations: generation, revision, report.
+    pub(crate) fn quotas(observed: &[Observed]) -> Vec<(u64, u64, ovrcr_protocol::QuotaReport)> {
+        observed
+            .iter()
+            .filter_map(|entry| match entry {
+                Observed::Report(report) => match &report.observation {
+                    ovrcr_protocol::AgentObservation::Quota(quota) => Some((
+                        report.binding.generation,
+                        report.revision,
+                        (**quota).clone(),
+                    )),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The reporter-health reasons that reached the supervisor, in order.
     pub(crate) fn health(observed: &[Observed]) -> Vec<(ovrcr_protocol::ReporterHealth, String)> {
         observed

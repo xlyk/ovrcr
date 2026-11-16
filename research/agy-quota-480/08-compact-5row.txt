@@ -1,0 +1,22 @@
+󰚩 OVRCR                                                                                                          [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│local (#1)  shell · 0m                                                           pid 36858
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────
+┃· Off                                ┃│consigint › printf 'CUA_%s\n' AGY_QUOTA_INPU
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│CUA_AGY_QUOTA_INPUT_OK
+ CONSIGINT ────────────────────────────│consigint ›
+  󰘬 main                          root │
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+       Allowance Supplement Session    │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+ Resources · cpu 24% · mem 34.9/48G    │
+Claude · not signed in                 │
+Codex · unavailable · retry 10m        │
+Grok · not signed in · retry 10m       │
+Agy 5h 72%                             │
+Cursor · usage off                     │
+BROWSE  Space Menu  : Commands  ? Help  m Recent activity

@@ -84,6 +84,7 @@ impl ServerState {
         watched.report = report;
         drop(watched);
         quota::sync_consent(self);
+        self.recompute_agy_quota(false);
         self.record_event(ovrcr_protocol::EventComponent::Settings, None, "reloaded");
         self.record_event(
             ovrcr_protocol::EventComponent::Settings,

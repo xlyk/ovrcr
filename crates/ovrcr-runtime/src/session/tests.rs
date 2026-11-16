@@ -1994,3 +1994,82 @@ fn no_process_marker_preserves_diagnostic_and_typed_cause() {
     );
     assert!(format!("{marked:#}").contains("preflight diagnostic"));
 }
+
+#[test]
+fn terminate_after_child_reaped_before_exit_event_returns_already_exited() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = crate::server::event_channel(None);
+    let session = Session::spawn_registered(
+        SessionId(24),
+        SessionSpec {
+            scope: ovrcr_protocol::SessionScope::Workspace,
+            restore_command: None,
+            initial_prompt: None,
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "reaped-before-exit-event".into(),
+            label: "sh".into(),
+            cwd: dir.path().to_path_buf(),
+            argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        tx,
+        NO_REGISTER,
+    )
+    .unwrap();
+    let exited_event = loop {
+        let event = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter must emit SessionEvent::Exited after reaping child");
+        if matches!(event, SessionEvent::Exited { .. }) {
+            break event;
+        }
+        session.apply_event(event);
+    };
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "SessionEvent::Exited is still in flight on the dispatcher queue"
+    );
+    let tty = session.tty.as_deref().expect("session PTY has tty name");
+    assert_eq!(
+        attached_groups_checked(tty, session.pgid)
+            .expect("empty PTY after leader exit must not fail subgroup discovery"),
+        std::collections::BTreeSet::new()
+    );
+    let apply_session = Arc::clone(&session);
+    let deliver = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(25));
+        apply_session.apply_event(exited_event);
+    });
+    let error = session
+        .terminate(Duration::from_millis(500))
+        .expect_err("reaped natural exit before terminate must return AlreadyExited");
+    deliver.join().unwrap();
+    assert!(
+        error.is::<AlreadyExited>(),
+        "expected AlreadyExited, got: {error:#}"
+    );
+}
+
+#[test]
+fn attached_groups_fallback_table_filters_tty_leader_and_detached_rows() {
+    let table = "\
+     1 ?\n\
+   400 pts/3\n\
+   401 pts/3\n\
+   402 /dev/pts/3\n\
+   403 pts/4\n\
+   404 ??\n\
+   500 pts/3\n";
+    assert_eq!(
+        attached_groups_from_table(table, "pts/3", 400, 500),
+        std::collections::BTreeSet::from([401, 402])
+    );
+    assert_eq!(
+        attached_groups_from_table(table, "pts/9", 400, 500),
+        std::collections::BTreeSet::new()
+    );
+}

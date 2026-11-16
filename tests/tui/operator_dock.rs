@@ -179,6 +179,7 @@ fn quota_with_windows() -> QuotaSnapshot {
         &mut snapshot.claude,
         &mut snapshot.codex,
         &mut snapshot.grok,
+        &mut snapshot.agy,
         &mut snapshot.cursor,
     ] {
         provider.state = QuotaState::Current;

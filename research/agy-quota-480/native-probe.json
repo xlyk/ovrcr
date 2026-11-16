@@ -1,0 +1,123 @@
+{
+  "ticket": 484,
+  "spec": 480,
+  "native_usage_gate": {
+    "agy_executable": "/opt/homebrew/bin/agy",
+    "version": "1.5.9",
+    "version_exit_code": 0,
+    "usage_exit_code": 0,
+    "status": "SUCCESS",
+    "command_name": "usage",
+    "group_count": 2,
+    "buckets": [
+      {
+        "group_index": 0,
+        "id": "gemini-weekly",
+        "window": "weekly",
+        "disabled": false,
+        "remaining_fraction_in_unit_interval": true,
+        "reset_time_valid": true
+      },
+      {
+        "group_index": 0,
+        "id": "gemini-5h",
+        "window": "5h",
+        "disabled": false,
+        "remaining_fraction_in_unit_interval": true,
+        "reset_time_valid": true
+      },
+      {
+        "group_index": 1,
+        "id": "3p-weekly",
+        "window": "weekly",
+        "disabled": false,
+        "remaining_fraction_in_unit_interval": true,
+        "reset_time_valid": true
+      },
+      {
+        "group_index": 1,
+        "id": "3p-5h",
+        "window": "5h",
+        "disabled": false,
+        "remaining_fraction_in_unit_interval": true,
+        "reset_time_valid": true
+      }
+    ],
+    "num_turns": 0,
+    "total_tokens": 0,
+    "browser_guard_untouched": true
+  },
+  "synthetic_run": {
+    "mode": "synthetic_controlled",
+    "usage_calls_count": 2,
+    "supplement_sent": true,
+    "nested_socket_removed": true,
+    "cleanup": {
+      "launcher_exit_code": 0,
+      "demo_root_removed": true,
+      "socket_removed": true,
+      "recorded_pgid_count": 15,
+      "all_pgids_process_lookup_error": true,
+      "pgid_checks": {
+        "36612": "ProcessLookupError",
+        "36858": "ProcessLookupError",
+        "37163": "ProcessLookupError",
+        "37421": "ProcessLookupError",
+        "37682": "ProcessLookupError",
+        "38101": "ProcessLookupError",
+        "38638": "ProcessLookupError",
+        "39013": "ProcessLookupError",
+        "39379": "ProcessLookupError",
+        "39708": "ProcessLookupError",
+        "40010": "ProcessLookupError",
+        "40317": "ProcessLookupError",
+        "40679": "ProcessLookupError",
+        "40858": "ProcessLookupError",
+        "42343": "ProcessLookupError"
+      }
+    }
+  },
+  "live_native_run": {
+    "mode": "live_installed_agy_1_5_9",
+    "cleanup": {
+      "launcher_exit_code": 0,
+      "demo_root_removed": true,
+      "socket_removed": true,
+      "recorded_pgid_count": 14,
+      "all_pgids_process_lookup_error": true,
+      "pgid_checks": {
+        "65694": "ProcessLookupError",
+        "65980": "ProcessLookupError",
+        "66299": "ProcessLookupError",
+        "66616": "ProcessLookupError",
+        "66983": "ProcessLookupError",
+        "67522": "ProcessLookupError",
+        "68003": "ProcessLookupError",
+        "68346": "ProcessLookupError",
+        "68651": "ProcessLookupError",
+        "68956": "ProcessLookupError",
+        "69284": "ProcessLookupError",
+        "69590": "ProcessLookupError",
+        "69894": "ProcessLookupError",
+        "70164": "ProcessLookupError"
+      }
+    }
+  },
+  "privacy_audit": {
+    "checked_txt_files": [
+      "01-held-supplement-and-input.txt",
+      "02-usage-bars-teal.txt",
+      "03-details-key-u.txt",
+      "04-details-mouse-click.txt",
+      "05-palette-quota-details.txt",
+      "06-narrow-sidebar.txt",
+      "07-sidebar-hidden.txt",
+      "08-compact-5row.txt",
+      "09-nested-quota-u.txt",
+      "10-live-native-bars.txt",
+      "11-live-native-details.txt"
+    ],
+    "finding_count": 0,
+    "findings": []
+  }
+}

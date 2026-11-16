@@ -320,6 +320,7 @@ impl Loader<'_> {
             }
             self.native(&mut quota, "quota.codex", &mut settings.quota.codex);
             self.native(&mut quota, "quota.grok", &mut settings.quota.grok);
+            self.native(&mut quota, "quota.agy", &mut settings.quota.agy);
             if let Some(mut cursor) = self.take::<toml::Table>(&mut quota, "quota.cursor") {
                 self.value(
                     &mut cursor,
@@ -1006,6 +1007,10 @@ home = "/tmp/codex-home"
 [quota.grok]
 command = "/opt/grok"
 
+[quota.agy]
+command = "/opt/agy"
+home = "/tmp/agy-home"
+
 [quota.cursor]
 dashboard = true
 state_db = "/tmp/cursor/state.vscdb"
@@ -1109,6 +1114,11 @@ login = "owner@example.com"
         );
         assert_eq!(settings.quota.grok.command, PathBuf::from("/opt/grok"));
         assert_eq!(settings.quota.grok.home, None);
+        assert_eq!(settings.quota.agy.command, PathBuf::from("/opt/agy"));
+        assert_eq!(
+            settings.quota.agy.home,
+            Some(PathBuf::from("/tmp/agy-home"))
+        );
         assert_eq!(settings.delegation.progress_deadline_ms, 12345);
         assert!(settings.delegation.enabled);
         assert_eq!(
@@ -1241,6 +1251,8 @@ login = "owner@example.com"
                 "quota.codex.home",
                 "quota.grok.command",
                 "quota.grok.home",
+                "quota.agy.command",
+                "quota.agy.home",
                 "quota.cursor.dashboard",
                 "quota.cursor.state_db",
                 "resources.sidebar",
@@ -1297,13 +1309,15 @@ login = "owner@example.com"
 
     #[test]
     fn unknown_keys_are_findings_and_ignored() {
-        let report =
-            read("ready_sund = true\n[quota]\nenabeld = true\n[quota.codex]\nhom = '/x'\n");
+        let report = read(
+            "ready_sund = true\n[quota]\nenabeld = true\n[quota.codex]\nhom = '/x'\n[quota.agy]\nhom = '/y'\n",
+        );
         assert_eq!(report.settings, defaults());
-        assert_eq!(report.findings.len(), 3, "{:?}", report.findings);
+        assert_eq!(report.findings.len(), 4, "{:?}", report.findings);
         finding("ready_sund", 1, "unknown setting", &report);
         finding("quota.enabeld", 3, "unknown setting", &report);
         finding("quota.codex.hom", 5, "unknown setting", &report);
+        finding("quota.agy.hom", 7, "unknown setting", &report);
     }
 
     #[test]

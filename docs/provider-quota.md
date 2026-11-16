@@ -9,6 +9,7 @@ The sidebar's quota section, immediately above the Operator dock, shows account 
 - **Claude:** `GET https://api.anthropic.com/api/oauth/usage` with `anthropic-beta: oauth-2025-04-20` and the Claude Code access token already in `~/.claude/.credentials.json` (`$CLAUDE_CONFIG_DIR` when set). `five_hour` and `seven_day` become 5h/7d rows. OVRCR does not refresh or rewrite that file, and it does not start a new login. A managed session's status-line `rate_limits` is only an in-session extra: the account row does not wait on it. The consented probe below remains optional.
 - **Codex:** a task-owned `codex -s read-only -a never app-server`, then JSON-RPC `account/rateLimits/read`. Codex keeps the token. OVRCR does not `GET chatgpt.com/backend-api/wham/usage` and does not write `auth.json`. Window durations come from the response; primary and secondary are not assumed to mean 5h and 7d. Model-specific buckets remain in details, not general allowance on the sidebar line. There is no version probe or allowlist: support is decided by the protocol itself. Recorded working versions: **0.155.1**, **0.160.1** and **0.161.0** (2026-10-07, identical `account/read` and `account/rateLimits/read` shapes).
 - **Grok:** `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` with the existing `~/.grok/auth.json` key (`$GROK_HOME` or `quota.grok.home`) and header `x-xai-token-auth: xai-grok-cli`. When `expires_at` is past or near expiry, redeem `refresh_token` at `https://auth.x.ai/oauth2/token` (client id from `oidc_client_id` or the `https://auth.x.ai::…` scope) under the sibling `auth.json.lock`, rewrite `auth.json` atomically, then continue the billing probe. Do not spawn the Grok TUI. A missing or rejected refresh token is not signed in. Claude credentials stay under ADR 0008. `x.ai/billing` on `grok agent stdio` is method-not-found and is not the path. The typed `creditUsagePercent` and weekly or monthly `currentPeriod` determine the label. The body is proto3 JSON, which omits zero values: right after a period resets `creditUsagePercent` is absent until usage reaches 1%, and OVRCR reads that as 0% used (100% left), as native Grok does. Prepaid credits, on-demand spend, session tokens and cost are not general allowance. A team identifier in the native login does not by itself reject subscription allowance. Accounts without validated general subscription windows stay unknown or unsupported.
+- **Agy:** a task-owned `agy -p /usage --output-format json --settings {}` run in an isolated temporary directory and process group with `AGY_CLI_DISABLE_AUTO_UPDATE=true` and failing `open`, `xdg-open` and `BROWSER` guards. OVRCR never reads Keychain or OAuth token files directly, never mutates the CLI or user settings, spends zero tokens, and never opens a login browser. `gemini-5h` (`5h`) and `gemini-weekly` (`7d`) become general allowance bars on the sidebar (rendered in teal); `3p-5h` and `3p-weekly` (`Claude + GPT`) and model-specific or versioned buckets stay in **Quota details**, except when neither `gemini-5h` nor `gemini-weekly` exists among enabled Gemini buckets, in which case enabled Gemini buckets supply general allowance. Disabled buckets are skipped. When `quota.agy.home` is unset, sanitized status-line `quota` buckets from the focused or freshest bound managed `agy` session supplement the row (`observed` timestamp set, `checked` unset) while `/usage` is checking or failed without retained windows, yielding as soon as an authoritative `/usage` read succeeds. Recorded working version: **1.5.9** ([Native Agy quota acceptance](../research/agy-quota-480/README.md)).
 
 Claude's selected source follows the focused managed Claude session and is retained when focus moves elsewhere. A connected source keeps **waiting for report** until native quota arrives; ordinary metrics and resizing do not make it unavailable. Native collectors use the configured native profile; account metadata stays private and never appears on the Dashboard wire.
 
@@ -33,9 +34,9 @@ The run uses `--model haiku`, `--tools ""`, `--permission-mode dontAsk`, and `--
 
 Claude sends a startup status line before its first API response, when `rate_limits` can be absent. The probe keeps waiting through missing, null or empty usage; those callbacks do not establish whether the login has a subscription. [Claude status-line documentation](https://code.claude.com/docs/en/statusline#available-data) describes when these fields become available.
 
-A probe runs on Dashboard attach when the Claude reading is stale, on manual refresh (the same 30-second cooldown as Codex and Grok), and every 30 minutes while a Dashboard stays attached and no managed Claude session has reported inside the stale boundary. It never runs while no Dashboard is attached, and never two at a time. It also waits until `claude auth status` has said an allowance can exist: not signed in, an API-key login, or a missing `claude` stays on that row and does not spend a prompt.
+A probe runs on Dashboard attach when the Claude reading is stale, on manual refresh (the same 30-second cooldown as Codex, Grok and Agy), and every 30 minutes while a Dashboard stays attached and no managed Claude session has reported inside the stale boundary. It never runs while no Dashboard is attached, and never two at a time. It also waits until `claude auth status` has said an allowance can exist: not signed in, an API-key login, or a missing `claude` stays on that row and does not spend a prompt.
 
-Details show a probe reading like any other, as of the probe's report. A live managed Claude session's report keeps precedence over it. `quota.enabled` does not gate the probe; that switch gates Codex, Grok and the opt-in Cursor reader.
+Details show a probe reading like any other, as of the probe's report. A live managed Claude session's report keeps precedence over it. `quota.enabled` does not gate the probe; that switch gates Codex, Grok, Agy and the opt-in Cursor reader.
 
 | Probe outcome | Claude row |
 | --- | --- |
@@ -48,7 +49,7 @@ Details show a probe reading like any other, as of the probe's report. A live ma
 
 ## Collection
 
-Claude's account row comes from the oauth usage reader and does not need `quota.enabled`. Codex and Grok collection is on by default while a Dashboard is attached. The readers are read-only: they do not refresh or rewrite auth files, which is why the old opt-in default is no longer required. Set `quota.enabled = false` in the settings document to turn Codex, Grok and the opt-in Cursor reader off. The setting remains; only the default changed. `dashboard.toml` lives in the OVRCR instance directory selected by `OVRCR_HOME` (a `[quota]` table in a preserved legacy `config.toml` configures nothing and `ovrcr settings` reports it as a finding). A change applies on the next settings check; a restart is not required.
+Claude's account row comes from the oauth usage reader and does not need `quota.enabled`. Codex, Grok and Agy collection is on by default while a Dashboard is attached. Set `quota.enabled = false` in the settings document to turn Codex, Grok, Agy and the opt-in Cursor reader off. The setting remains; only the default changed. `dashboard.toml` lives in the OVRCR instance directory selected by `OVRCR_HOME` (a `[quota]` table in a preserved legacy `config.toml` configures nothing and `ovrcr settings` reports it as a finding). A change applies on the next settings check; a restart is not required.
 
 ```toml
 [quota]
@@ -65,12 +66,16 @@ command = "codex"
 command = "grok"
 # home = "/absolute/path/to/grok-profile" # native GROK_HOME
 
+[quota.agy]
+command = "agy"
+# home = "/absolute/path/to/agy-profile"   # isolated HOME + SSH_TTY file-token profile; suppresses ambient session supplement
+
 [quota.cursor]
 dashboard = false                 # opt in: experimental personal Cursor dashboard reader
 # state_db = "/absolute/path/to/state.vscdb" # omit for the Cursor desktop default
 ```
 
-Omit `home` to use the native client's existing profile. OVRCR does not provide login, copy credentials, or attach to a shared native client. No native version is required or refused. A client that does not speak the protocol fails closed as unsupported: an unknown method (JSON-RPC -32601, or -32600/-32602 as Codex app-server answers it) or a reply OVRCR cannot read. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. [Native Codex read/UI acceptance](../research/codex-quota-native-acceptance-2026-10-05/README.md) verified the installed 0.155.1 CLI with an existing ChatGPT login on `05adc3d0`. The record keeps unobserved native notifications/profile switching and the combined three-provider lifecycle gate (#231) explicit.
+Omit `home` to use the native client's existing profile. For `quota.agy`, setting `home` runs the collector with `HOME` pointed at that directory and `SSH_TTY=ovrcr-quota` so Antigravity uses file-backed credentials under `<home>/.gemini/antigravity-cli` instead of the ambient macOS Keychain, and suppresses ambient managed-session status-line supplementation. OVRCR does not provide login, copy credentials, or attach to a shared native client. No native version is required or refused. A client that does not speak the protocol fails closed as unsupported: an unknown method (JSON-RPC -32601, or -32600/-32602 as Codex app-server answers it) or a reply OVRCR cannot read. Native collection runs only while a Dashboard is attached, with one worker per provider, a five-minute cadence, bounded replies and a twenty-second request deadline, and failure backoff (below). The deadline covers native writes and incoming notifications as well as replies. Fifty Sessions do not create fifty account readers. Every `quota.*` setting is live: a change restarts the native client and reads at once. [Native Codex read/UI acceptance](../research/codex-quota-native-acceptance-2026-10-05/README.md) verified the installed 0.155.1 CLI with an existing ChatGPT login on `05adc3d0`. The record keeps unobserved native notifications/profile switching and the combined three-provider lifecycle gate (#231) explicit.
 
 ## Interpret the display
 
@@ -85,7 +90,7 @@ Each provider row carries a state, a **Quota reason** and a **Next check**, all 
 | State | Meaning |
 | --- | --- |
 | off | `quota.enabled` is explicitly false. The reason is the off-state sentence naming the setting. The default is on. |
-| checking | The first read is in flight. Codex and Grok stay here until their account read returns, unless `quota.enabled` is false. Claude stays here, with the reason "waiting for a managed Claude session's first response", until the oauth usage read, a managed session, or a consented probe reports, unless `claude auth status` rules an allowance out. Waiting, unsupported, and not signed in stay as they are when that read has not succeeded or cannot. |
+| checking | The first read is in flight. Codex, Grok and Agy stay here until their account read returns (or, for ambient Agy, a managed session's status line supplements the row), unless `quota.enabled` is false. Claude stays here, with the reason "waiting for a managed Claude session's first response", until the oauth usage read, a managed session, or a consented probe reports, unless `claude auth status` rules an allowance out. Waiting, unsupported, and not signed in stay as they are when that read has not succeeded or cannot. |
 | current | The last read succeeded and carried at least one usable value. The next check is five minutes later. A well-formed reply with no usable value is unavailable, "no usage reported", rather than a row of dashes. |
 | unavailable, not signed in, unsupported, invalid, source conflict | The last read failed. The reason says why. |
 
@@ -101,14 +106,14 @@ A success resets the ladder. Changing any `quota.*` setting also resets it and r
 
 ### Manual refresh
 
-`Request::RefreshQuota { provider }` (all enabled native providers when `provider` is none) marks the worker due now. The Server enforces it:
+`Request::RefreshQuota { provider }` (Codex, Grok, Agy and opt-in Cursor when enabled and `provider` is none) marks the worker due now. The Server enforces it:
 
 - One read per provider is in flight at a time; a refresh asked for during a read is answered by that read.
 - Accepted refreshes are at least 30 seconds apart. A refresh inside the cooldown is refused with `Response::QuotaCooldown { remaining_ms }`.
 - A refresh skips a failure backoff but never a provider's Retry-After.
-- With `quota.claude.probe` off, Claude is not refreshable. With it on, a refresh runs one probe under the same cooldown, including when `provider` is Claude or omitted. A refresh while `quota.enabled` is off is still refused for Codex and Grok; an omitted provider with the probe on still runs the probe and does not start the native workers.
+- With `quota.claude.probe` off, Claude is not refreshable. With it on, a refresh runs one probe under the same cooldown, including when `provider` is Claude or omitted. A refresh while `quota.enabled` is off is still refused for Codex, Grok and Agy; an omitted provider with the probe on still runs the probe and does not start the native workers.
 
-In the Dashboard, the palette's **Refresh quota** sends this request for both native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable native account usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
+In the Dashboard, the palette's **Refresh quota** sends this request for all enabled native providers and shows a cooldown refusal's remaining seconds in the footer. **Enable native account usage**, listed while collection is off, sends `SetSetting { path: "quota.enabled", value: "true" }`; the Server validates, writes and republishes, and the Dashboard applies nothing until it does.
 
 
 ## Cursor personal account

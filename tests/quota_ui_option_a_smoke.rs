@@ -57,7 +57,9 @@ fn quota_left_option_a_linux_dashboard_smoke() {
         "state separator · missing:\n{empty}"
     );
     assert!(
-        empty.contains("Codex · usage off") && empty.contains("Grok · usage off"),
+        empty.contains("Codex · usage off")
+            && empty.contains("Grok · usage off")
+            && empty.contains("Agy · usage off"),
         "usage-off rows:\n{empty}"
     );
     assert!(
@@ -117,6 +119,29 @@ fn quota_left_option_a_linux_dashboard_smoke() {
             }],
             ..ProviderQuota::unknown(QuotaProvider::Grok, QuotaState::Current)
         },
+        agy: ProviderQuota {
+            observed_unix_ms: Some(now),
+            checked_unix_ms: Some(now),
+            windows: vec![
+                QuotaWindow {
+                    id: "gemini-5h".into(),
+                    label: "5h".into(),
+                    general: true,
+                    used_basis_points: Some(1_500),
+                    over_limit: false,
+                    resets_unix_ms: Some(now + 3_600_000),
+                },
+                QuotaWindow {
+                    id: "gemini-weekly".into(),
+                    label: "7d".into(),
+                    general: true,
+                    used_basis_points: Some(3_000),
+                    over_limit: false,
+                    resets_unix_ms: Some(now + 604_800_000),
+                },
+            ],
+            ..ProviderQuota::unknown(QuotaProvider::Agy, QuotaState::Current)
+        },
     };
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::QuotaChanged(Box::new(
         snapshot,
@@ -152,6 +177,15 @@ fn quota_left_option_a_linux_dashboard_smoke() {
     assert!(
         bars.lines()
             .any(|line| line.contains("Grok") && line.contains("wk") && line.contains('━')),
+        "{bars}"
+    );
+    assert!(
+        bars.lines().any(|line| {
+            line.contains("Agy")
+                && line.contains("5h")
+                && line.contains('━')
+                && line.contains("85%")
+        }),
         "{bars}"
     );
     eprintln!("option-a smoke ok; dump {}", public.display());

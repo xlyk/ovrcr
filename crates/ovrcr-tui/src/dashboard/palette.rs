@@ -3558,7 +3558,7 @@ impl Dashboard {
             command: Command::RefreshQuota,
         });
         if self.quotas.as_ref().is_some_and(|quota| {
-            [&quota.codex, &quota.grok]
+            [&quota.codex, &quota.grok, &quota.agy]
                 .iter()
                 .any(|provider| provider.state == crate::protocol::QuotaState::Disabled)
         }) {

@@ -8,8 +8,8 @@ use super::InvocationLease;
 use super::reporter::{self, Frames, Reporter};
 use ovrcr_protocol::{
     ActivitySample, AgentActivity, AgentObservation, AgentProvider, AgyConversation, ContextSample,
-    ConversationReference, Measurement, MetricsSample, SampleQuality, UsageCoverage, UsageScope,
-    UsageTotals, validate_agent_id,
+    ConversationReference, Measurement, MetricsSample, QuotaReport, SampleQuality, UsageCoverage,
+    UsageScope, UsageTotals, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::HookHandler;
 use serde_json::{Value, json};
@@ -173,6 +173,7 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
         bound: None,
         retained: None,
         model: None,
+        quota: None,
         activity: None,
         cycle: 0,
         cycle_active: false,
@@ -238,9 +239,23 @@ fn normalized_model(value: &Value) -> Option<String> {
     Some(label.to_owned())
 }
 
-/// Normalize a native status-line object to only identity, title, model and state.
-/// In particular, transcript paths, prompts and arbitrary nested provider fields drop.
-fn statusline_payload(input: &[u8]) -> Option<Value> {
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatuslinePayload {
+    conversation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    agent_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quota: Option<ovrcr_runtime::server::SanitizedAgyStatuslineQuota>,
+}
+
+/// Normalize a native status-line object to only identity, title, model, state and
+/// sanitized allowance buckets. Transcript paths, prompts, account identity and arbitrary
+/// nested provider fields drop.
+fn statusline_payload(input: &[u8]) -> Option<StatuslinePayload> {
     if input.is_empty() || input.len() > super::HOOK_INPUT_LIMIT {
         return None;
     }
@@ -253,17 +268,16 @@ fn statusline_payload(input: &[u8]) -> Option<Value> {
     ) {
         return None;
     }
-    let mut payload = json!({
-        "conversation_id": conversation,
-        "agent_state": state,
-    });
-    if let Some(title) = safe_title(value.get("conversation_title")) {
-        payload["conversation_title"] = json!(title);
-    }
-    if let Some(model) = normalized_model(&value) {
-        payload["model"] = json!(model);
-    }
-    Some(payload)
+    let quota = value
+        .get("quota")
+        .and_then(ovrcr_runtime::server::sanitize_agy_statusline_quota);
+    Some(StatuslinePayload {
+        conversation_id: conversation.to_owned(),
+        conversation_title: safe_title(value.get("conversation_title")),
+        model: normalized_model(&value),
+        agent_state: state.to_owned(),
+        quota,
+    })
 }
 
 fn has_error(value: &Value) -> bool {
@@ -358,6 +372,7 @@ struct Events {
     bound: Option<String>,
     retained: Option<AgyConversation>,
     model: Option<String>,
+    quota: Option<QuotaReport>,
     activity: Option<AgentActivity>,
     cycle: u64,
     cycle_active: bool,
@@ -417,6 +432,7 @@ impl Events {
         self.mismatch_reported = false;
         self.recovery = Some(reference);
         self.model = None;
+        self.quota = None;
         self.activity = None;
         if switching {
             self.cycle = 0;
@@ -504,6 +520,33 @@ impl Events {
         result
     }
 
+    fn publish_quota(
+        &mut self,
+        reporter: &mut Reporter,
+        quota: Option<&Value>,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        let Some(raw) = quota.filter(|v| !v.is_null()) else {
+            return reporter::IGNORED.to_vec();
+        };
+        let sanitized =
+            serde_json::from_value::<ovrcr_runtime::server::SanitizedAgyStatuslineQuota>(
+                raw.clone(),
+            )
+            .unwrap_or(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid);
+        let Some(report) = ovrcr_runtime::server::normalize_agy_statusline_quota(&sanitized) else {
+            return reporter::IGNORED.to_vec();
+        };
+        if self.quota.as_ref() == Some(&report) {
+            return reporter::IGNORED.to_vec();
+        }
+        let result = reporter.publish(AgentObservation::Quota(Box::new(report.clone())), deadline);
+        if result == reporter::ACCEPTED {
+            self.quota = Some(report);
+        }
+        result
+    }
+
     fn statusline(
         &mut self,
         reporter: &mut Reporter,
@@ -526,6 +569,10 @@ impl Events {
         if model_result == reporter::UNAVAILABLE {
             return model_result;
         }
+        let quota_result = self.publish_quota(reporter, payload.get("quota"), deadline);
+        if quota_result == reporter::UNAVAILABLE {
+            return quota_result;
+        }
 
         let Some(native_state) = payload["agent_state"].as_str() else {
             return reporter::IGNORED.to_vec();
@@ -544,7 +591,7 @@ impl Events {
             next_activity
         };
         if self.activity == Some(report_state) {
-            return if model_result == reporter::ACCEPTED {
+            return if model_result == reporter::ACCEPTED || quota_result == reporter::ACCEPTED {
                 reporter::ACCEPTED.to_vec()
             } else {
                 reporter::IGNORED.to_vec()
@@ -727,6 +774,7 @@ mod tests {
                 bound: None,
                 retained: None,
                 model: None,
+                quota: None,
                 activity: None,
                 cycle: 0,
                 cycle_active: false,
@@ -742,7 +790,7 @@ mod tests {
         )
     }
 
-    fn frame(origin: &str, payload: Value) -> Vec<u8> {
+    fn frame(origin: &str, payload: impl serde::Serialize) -> Vec<u8> {
         serde_json::to_vec(&json!({"provider":"agy", "origin":origin, "payload":payload})).unwrap()
     }
 
@@ -790,12 +838,14 @@ mod tests {
             "unrelated":{"secret":"drop"}
         });
         let normalized = statusline_payload(&serde_json::to_vec(&input).unwrap()).unwrap();
-        assert_eq!(normalized["conversation_id"], A);
-        assert_eq!(normalized["conversation_title"], "Native topic");
-        assert_eq!(normalized["model"], "Gemini Pro");
-        assert_eq!(normalized["agent_state"], "working");
-        assert_eq!(normalized.as_object().unwrap().len(), 4);
-        let text = normalized.to_string();
+        let serialized = serde_json::to_value(&normalized).unwrap();
+        assert_eq!(serialized["conversation_id"], A);
+        assert_eq!(serialized["conversation_title"], "Native topic");
+        assert_eq!(serialized["model"], "Gemini Pro");
+        assert_eq!(serialized["agent_state"], "working");
+        assert_eq!(serialized.as_object().unwrap().len(), 4);
+        assert!(normalized.quota.is_none());
+        let text = serialized.to_string();
         assert!(!text.contains("secret"));
         assert!(!text.contains("private prompt"));
         assert!(
@@ -1282,5 +1332,355 @@ mod tests {
         );
         drive(&mut events, &mut reporter, &status(A, "idle"));
         assert!(!events.completion_candidate);
+    }
+
+    #[test]
+    fn statusline_allowlist_sanitizes_quota_buckets_strips_secrets_and_marks_wrong_shapes_invalid()
+    {
+        let input = json!({
+            "conversation_id": A,
+            "conversation_title": "Allowance topic",
+            "account_email": "private-user@example.invalid",
+            "last_user_input": "private prompt",
+            "model": {"display_name": "Gemini 2.5 Pro"},
+            "agent_state": "working",
+            "quota": {
+                "gemini-5h": {
+                    "remaining_fraction": 0.5562,
+                    "reset_time": "2026-11-15T20:00:00Z",
+                    "reset_in_seconds": 7200,
+                    "window": "5h",
+                    "name": "Gemini (5-hour)",
+                    "remaining": {"remainingFraction": 0.5562, "secret": "nested-secret"},
+                    "description": "secret plan description",
+                    "email": "private-user@example.invalid",
+                    "credits": 999
+                },
+                "3p-weekly": {
+                    "remainingFraction": 0.8,
+                    "resetTime": 1794800000u64,
+                    "disabled": false,
+                    "displayName": "Claude + GPT (Weekly)",
+                    "token": "secret-bearer-token"
+                }
+            }
+        });
+        let normalized = statusline_payload(&serde_json::to_vec(&input).unwrap()).unwrap();
+        let serialized_value = serde_json::to_value(&normalized).unwrap();
+        assert_eq!(serialized_value["conversation_id"], A);
+        assert_eq!(serialized_value["conversation_title"], "Allowance topic");
+        assert_eq!(serialized_value["model"], "Gemini 2.5 Pro");
+        assert_eq!(serialized_value["agent_state"], "working");
+        let serialized = serde_json::to_string(&normalized).unwrap();
+        assert!(!serialized.contains("\"window\""));
+        assert!(!serialized.contains("\"name\""));
+        assert!(!serialized.contains("Gemini (5-hour)"));
+        assert!(!serialized.contains("\"displayName\""));
+        assert!(!serialized.contains("Claude + GPT (Weekly)"));
+        assert!(!serialized.contains("\"remaining\""));
+        assert!(!serialized.contains("nested-secret"));
+        assert!(!serialized.contains("private-user@example.invalid"));
+        assert!(!serialized.contains("private prompt"));
+        assert!(!serialized.contains("secret plan description"));
+        assert!(!serialized.contains("secret-bearer-token"));
+
+        let null_quota = json!({
+            "conversation_id": A,
+            "agent_state": "idle",
+            "quota": null
+        });
+        let null_normalized =
+            statusline_payload(&serde_json::to_vec(&null_quota).unwrap()).unwrap();
+        assert!(null_normalized.quota.is_none());
+
+        let ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Buckets(ref buckets) =
+            *normalized.quota.as_ref().unwrap()
+        else {
+            panic!("expected sanitized buckets");
+        };
+        assert_eq!(buckets.len(), 2);
+        for bucket_value in serialized_value["quota"]["buckets"]
+            .as_object()
+            .unwrap()
+            .values()
+        {
+            for key in bucket_value.as_object().unwrap().keys() {
+                assert!(
+                    matches!(
+                        key.as_str(),
+                        "remaining_fraction" | "reset_time" | "disabled"
+                    ),
+                    "unexpected retained bucket property: {key}"
+                );
+            }
+        }
+
+        for bad_quota in [
+            json!("raw-secret-string"),
+            json!(["raw-secret-array"]),
+            json!({"gemini-5h": "not-an-object-secret"}),
+            json!({"gemini-5h": {"remaining_fraction": "secret-fraction"}}),
+            json!({"gemini-5h": {"remaining_fraction": 1.25}}),
+            json!({"gemini-5h": {"remaining_fraction": -0.05}}),
+            json!({"gemini-5h": {"remaining_fraction": 0.5, "reset_time": "not-rfc3339-secret"}}),
+            json!({"gemini-5h": {"remaining_fraction": 0.5, "disabled": "not-bool"}}),
+        ] {
+            let raw = json!({
+                "conversation_id": A,
+                "conversation_title": "Still accepted",
+                "model": "Gemini 2.5 Pro",
+                "agent_state": "working",
+                "quota": bad_quota
+            });
+            let sanitized = statusline_payload(&serde_json::to_vec(&raw).unwrap())
+                .expect("malformed optional quota must never reject statusline callback");
+            assert_eq!(sanitized.conversation_id, A);
+            assert_eq!(
+                sanitized.conversation_title.as_deref(),
+                Some("Still accepted")
+            );
+            assert_eq!(
+                sanitized.quota,
+                Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid)
+            );
+            assert!(
+                !serde_json::to_string(&sanitized)
+                    .unwrap()
+                    .contains("secret")
+            );
+        }
+
+        let mut max_allowed = serde_json::Map::new();
+        for idx in 0..32 {
+            max_allowed.insert(
+                format!("bucket-{idx}-5h"),
+                json!({"remaining_fraction": 0.5, "disabled": idx >= 20}),
+            );
+        }
+        let exact_limit = json!({
+            "conversation_id": A,
+            "agent_state": "working",
+            "quota": Value::Object(max_allowed.clone())
+        });
+        let sanitized_exact =
+            statusline_payload(&serde_json::to_vec(&exact_limit).unwrap()).unwrap();
+        assert!(matches!(
+            sanitized_exact.quota,
+            Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Buckets(ref map))
+                if map.len() == 32
+        ));
+
+        max_allowed.insert(
+            "bucket-32-5h".into(),
+            json!({"remaining_fraction": 0.5, "disabled": true}),
+        );
+        let oversized = json!({
+            "conversation_id": A,
+            "agent_state": "working",
+            "quota": Value::Object(max_allowed)
+        });
+        let sanitized_oversized =
+            statusline_payload(&serde_json::to_vec(&oversized).unwrap()).unwrap();
+        assert_eq!(
+            sanitized_oversized.quota,
+            Some(ovrcr_runtime::server::SanitizedAgyStatuslineQuota::Invalid)
+        );
+    }
+
+    #[test]
+    fn statusline_quota_normalizes_buckets_deduplicates_and_isolates_malformed_quota_from_turn_tracking()
+     {
+        let (mut events, mut reporter, supervisor, _profile) = start(None);
+        let raw_initial = json!({
+            "conversation_id": A,
+            "conversation_title": "Quota subject",
+            "model": "Gemini 2.5 Pro",
+            "agent_state": "working",
+            "quota": {
+                "gemini-weekly": {
+                    "remaining_fraction": 0.75,
+                    "reset_time": "2026-11-20T00:00:00Z"
+                },
+                "3p-weekly": {
+                    "remainingFraction": 0.9,
+                    "resetTime": "2026-11-20T00:00:00Z"
+                },
+                "gemini-5h": {
+                    "remaining_fraction": 0.5562,
+                    "reset_time": "2026-11-15T20:00:00Z"
+                },
+                "3p-5h": {
+                    "remaining_fraction": 0.4,
+                    "reset_time": "2026-11-15T20:00:00Z"
+                },
+                "gemini-2.5-pro-5h": {
+                    "remaining_fraction": 0.8,
+                    "window": "5h",
+                    "name": "Gemini 2.5 Pro"
+                },
+                "disabled-bucket": {
+                    "remaining_fraction": 0.1,
+                    "disabled": true
+                }
+            }
+        });
+        let payload_initial =
+            statusline_payload(&serde_json::to_vec(&raw_initial).unwrap()).unwrap();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(STATUSLINE_ORIGIN, payload_initial.clone())
+            ),
+            reporter::ACCEPTED
+        );
+        // Repeating the identical statusline (same activity, model, and quota) is ignored.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(STATUSLINE_ORIGIN, payload_initial)
+            ),
+            reporter::IGNORED
+        );
+
+        // Changing quota while activity stays "working" publishes a new QuotaReport and returns ACCEPTED.
+        let mut raw_updated = raw_initial.clone();
+        raw_updated["quota"]["gemini-5h"]["remaining_fraction"] = json!(0.5);
+        let payload_updated =
+            statusline_payload(&serde_json::to_vec(&raw_updated).unwrap()).unwrap();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(STATUSLINE_ORIGIN, payload_updated)
+            ),
+            reporter::ACCEPTED
+        );
+
+        // Malformed quota during Stop -> idle must report Invalid for quota WITHOUT disrupting
+        // Conversation subject, model attribution, or Ready turn completion!
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &stop(A, 0, "NO_TOOL_CALL", true, false, false)
+            ),
+            reporter::IGNORED
+        );
+        let raw_malformed_idle = json!({
+            "conversation_id": A,
+            "conversation_title": "Updated subject on malformed quota",
+            "model": "Gemini 2.5 Flash",
+            "agent_state": "idle",
+            "quota": {"gemini-5h": {"remaining_fraction": 1.5}}
+        });
+        let payload_malformed_idle =
+            statusline_payload(&serde_json::to_vec(&raw_malformed_idle).unwrap()).unwrap();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(STATUSLINE_ORIGIN, payload_malformed_idle)
+            ),
+            reporter::ACCEPTED
+        );
+
+        // Switch foreground conversation to B with versioned Gemini buckets only (no gemini-5h/gemini-weekly):
+        // Gemini buckets fall back to general: true sorted 5h before 7d, while 3p stays general: false.
+        let raw_switch_b = json!({
+            "conversation_id": B,
+            "agent_state": "idle",
+            "quota": {
+                "gemini-2.5-pro-weekly": {"remaining_fraction": 0.7},
+                "3p-5h": {"remaining_fraction": 0.6},
+                "gemini-2.5-pro-5h": {"remaining_fraction": 0.9}
+            }
+        });
+        let payload_switch_b =
+            statusline_payload(&serde_json::to_vec(&raw_switch_b).unwrap()).unwrap();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(STATUSLINE_ORIGIN, payload_switch_b)
+            ),
+            reporter::ACCEPTED
+        );
+
+        let observed = supervisor.observed();
+        let quotas = Supervisor::quotas(&observed);
+        assert_eq!(quotas.len(), 4);
+
+        let first_windows = quotas[0].2.windows.as_ref().unwrap();
+        let summary: Vec<(&str, &str, bool, Option<u16>)> = first_windows
+            .iter()
+            .map(|w| {
+                (
+                    w.id.as_str(),
+                    w.label.as_str(),
+                    w.general,
+                    w.used_basis_points,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("gemini-5h", "5h", true, Some(4438)),
+                ("gemini-weekly", "7d", true, Some(2500)),
+                ("3p-5h", "5h", false, Some(6000)),
+                ("3p-weekly", "7d", false, Some(999)),
+                ("gemini-2.5-pro-5h", "5h", false, Some(1999)),
+            ]
+        );
+        assert_eq!(
+            quotas[1].2.windows.as_ref().unwrap()[0].used_basis_points,
+            Some(5000)
+        );
+        assert_eq!(quotas[2].2.state, ovrcr_protocol::QuotaState::Invalid);
+        assert!(quotas[2].2.windows.is_none());
+
+        let fallback_windows = quotas[3].2.windows.as_ref().unwrap();
+        let fallback_summary: Vec<(&str, &str, bool, Option<u16>)> = fallback_windows
+            .iter()
+            .map(|w| {
+                (
+                    w.id.as_str(),
+                    w.label.as_str(),
+                    w.general,
+                    w.used_basis_points,
+                )
+            })
+            .collect();
+        assert_eq!(
+            fallback_summary,
+            vec![
+                ("gemini-2.5-pro-5h", "5h", true, Some(999)),
+                ("gemini-2.5-pro-weekly", "7d", true, Some(3000)),
+                ("3p-5h", "5h", false, Some(4000)),
+            ]
+        );
+
+        // Verify subject, model, and Ready turn completion succeeded despite malformed quota!
+        assert!(observed.iter().any(|row| matches!(
+            row,
+            Observed::Retain { reference: ConversationReference::Agy(reference), .. }
+                if reference.conversation == A
+                    && reference.title.as_deref() == Some("Updated subject on malformed quota")
+        )));
+        assert_eq!(
+            Supervisor::models(&observed),
+            vec![
+                Some("Gemini 2.5 Pro".into()),
+                Some("Gemini 2.5 Flash".into())
+            ]
+        );
+        assert!(
+            Supervisor::activity(&observed)
+                .iter()
+                .any(|(_, _, state, _, _)| *state == AgentActivity::ResponseReady),
+            "malformed statusline quota must not disrupt Stop + idle -> ResponseReady"
+        );
     }
 }

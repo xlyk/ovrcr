@@ -220,7 +220,7 @@ pub enum AgentObservation {
     /// all. Published whole so a snapshot is never assembled from deltas. Appended last:
     /// bincode numbers variants by declaration order.
     Input(Vec<InputRequest>),
-    /// Native Claude account allowance, independently revised from session metrics.
+    /// Native Claude or Antigravity status-line allowance, independently revised from session metrics.
     Quota(Box<crate::QuotaReport>),
     /// Pi's public keybinding API and explicit agent_settled boundary. Content-free.
     NativeControl(Option<NativeControlSample>),
@@ -574,8 +574,11 @@ impl ProviderReport {
             AgentObservation::Health(h) => optional_id(&h.reason),
             AgentObservation::Input(requests) => validate_input_requests(requests),
             AgentObservation::Quota(quota) => {
-                if self.binding.provider != AgentProvider::Claude {
-                    bail!("session quota requires a native Claude source");
+                if !matches!(
+                    self.binding.provider,
+                    AgentProvider::Claude | AgentProvider::Agy
+                ) {
+                    bail!("session quota requires a native Claude or Agy source");
                 }
                 quota.validate()
             }
@@ -945,6 +948,29 @@ pub(crate) mod tests {
         assert!(serde_json::from_str::<UsageScope>("\"Unknown\"").is_err());
         assert!(serde_json::from_str::<UsageCoverage>("\"Unknown\"").is_err());
         assert!(serde_json::from_str::<ReporterHealth>("\"Unknown\"").is_err());
+
+        for (provider, allowed) in [
+            (AgentProvider::Claude, true),
+            (AgentProvider::Agy, true),
+            (AgentProvider::Codex, false),
+            (AgentProvider::Pi, false),
+            (AgentProvider::Grok, false),
+        ] {
+            let report = ProviderReport {
+                binding: AgentBinding {
+                    provider,
+                    invocation: "inv".into(),
+                    conversation: "conv".into(),
+                    generation: 1,
+                },
+                revision: 1,
+                observation: AgentObservation::Quota(Box::new(crate::QuotaReport {
+                    windows: None,
+                    state: crate::QuotaState::Invalid,
+                })),
+            };
+            assert_eq!(report.validate().is_ok(), allowed, "{provider:?}");
+        }
     }
     pub(crate) fn request_fixtures() -> Vec<Request> {
         let auth = SupervisorAuth {

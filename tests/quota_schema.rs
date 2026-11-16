@@ -166,3 +166,275 @@ fn grok_period_start_without_credit_usage_is_zero_used_not_unknown() {
     let windows = normalize_native_quota(QuotaProvider::Grok, &used).unwrap();
     assert_eq!(windows[0].remaining_basis_points(), Some(9900));
 }
+
+#[test]
+fn agy_normalizes_usage_envelope_and_sorts_general_before_third_party_and_versioned_buckets() {
+    // Mirrors native agy 1.5.9 `/usage` output where weekly precedes 5h inside each group.
+    let report = json!({
+        "status": "SUCCESS",
+        "command": {
+            "name": "usage",
+            "data": {
+                "description": "Subscription usage for user@example.invalid (Ultra)",
+                "groups": [
+                    {
+                        "name": "Gemini",
+                        "description": "Primary Gemini models",
+                        "buckets": [
+                            {
+                                "id": "gemini-weekly",
+                                "name": "Gemini Weekly",
+                                "remaining_fraction": 0.85,
+                                "reset_time": "2026-11-20T00:00:00Z",
+                                "window": "weekly"
+                            },
+                            {
+                                "id": "gemini-5h",
+                                "name": "Gemini 5-Hour",
+                                "remaining_fraction": 0.62,
+                                "reset_time": "2026-11-15T13:00:00Z",
+                                "window": "5h"
+                            },
+                            {
+                                "id": "gemini-4-argon-weekly",
+                                "name": "Gemini Argon Weekly",
+                                "remaining_fraction": 0.4,
+                                "reset_time": "2026-11-21T00:00:00Z",
+                                "window": "weekly"
+                            },
+                            {
+                                "id": "gemini-disabled",
+                                "name": "Disabled Bucket",
+                                "remaining_fraction": 0.0,
+                                "disabled": true
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Claude + GPT",
+                        "description": "Third-party models",
+                        "buckets": [
+                            {
+                                "id": "3p-weekly",
+                                "name": "Claude + GPT Weekly",
+                                "remaining_fraction": 0.75,
+                                "reset_time": 1795132800,
+                                "window": "weekly"
+                            },
+                            {
+                                "id": "3p-5h",
+                                "name": "Claude + GPT 5-Hour",
+                                "remaining_fraction": 1,
+                                "reset_time": "2026-11-15T12:00:00Z",
+                                "window": "5h"
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    });
+    let windows = normalize_native_quota(QuotaProvider::Agy, &report).unwrap();
+    let summary: Vec<_> = windows
+        .iter()
+        .map(|w| {
+            (
+                w.id.as_str(),
+                w.label.as_str(),
+                w.general,
+                w.remaining_basis_points(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("gemini-5h", "5h", true, Some(6200)),
+            ("gemini-weekly", "7d", true, Some(8500)),
+            ("3p-5h", "5h", false, Some(10000)),
+            ("3p-weekly", "7d", false, Some(7500)),
+            ("gemini-4-argon-weekly", "7d", false, Some(4000)),
+        ]
+    );
+    assert_eq!(windows[3].resets_unix_ms, Some(1_795_132_800_000));
+}
+
+#[test]
+fn agy_starter_weekly_only_and_gemini_fallback_and_aliases() {
+    // Starter weekly-only plan: only 7d general window, never fabricates a 5h bar.
+    let starter = json!({
+        "groups": [
+            {
+                "displayName": "Gemini",
+                "buckets": [
+                    {
+                        "bucketId": "gemini-weekly",
+                        "displayName": "Gemini Weekly",
+                        "remainingFraction": 0.0,
+                        "resetTime": "2026-11-20T00:00:00Z"
+                    }
+                ]
+            }
+        ]
+    });
+    let windows = normalize_native_quota(QuotaProvider::Agy, &starter).unwrap();
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].id, "gemini-weekly");
+    assert_eq!(windows[0].label, "7d");
+    assert!(windows[0].general);
+    assert_eq!(windows[0].used_basis_points, Some(10_000));
+    assert_eq!(windows[0].remaining_basis_points(), Some(0));
+
+    // Fallback: when the Gemini group has neither gemini-5h nor gemini-weekly enabled,
+    // its primary buckets become general: true (5h before 7d), while non-Gemini groups stay general: false.
+    let fallback = json!({
+        "groups": [
+            {
+                "name": "Gemini",
+                "buckets": [
+                    {
+                        "id": "gemini-5h",
+                        "disabled": true,
+                        "remaining_fraction": 0.9
+                    },
+                    {
+                        "id": "gemini-next-weekly",
+                        "name": "Gemini Next Weekly",
+                        "remaining_fraction": null,
+                        "remaining": { "remainingFraction": 0.25, "resetTime": "2020-01-01T00:00:00Z" }
+                    },
+                    {
+                        "id": "gemini-next-5h",
+                        "name": "Gemini Next 5h",
+                        "remaining_fraction": 1.0,
+                        "reset_time": "2026-11-15T12:00:00Z"
+                    }
+                ]
+            },
+            {
+                "name": "Experimental Models",
+                "buckets": [
+                    {
+                        "id": "exp-custom-b",
+                        "name": "Very Long Custom Bucket Label With\nControl",
+                        "remaining_fraction": 0.5
+                    },
+                    {
+                        "id": "exp-custom-a",
+                        "name": "Custom Alpha",
+                        "remaining_fraction": null
+                    }
+                ]
+            }
+        ]
+    });
+    let windows = normalize_native_quota(QuotaProvider::Agy, &fallback).unwrap();
+    let summary: Vec<_> = windows
+        .iter()
+        .map(|w| {
+            (
+                w.id.as_str(),
+                w.label.as_str(),
+                w.general,
+                w.remaining_basis_points(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("gemini-next-5h", "5h", true, Some(10_000)),
+            ("gemini-next-weekly", "7d", true, Some(2_500)),
+            ("exp-custom-a", "Custom Alpha", false, None),
+            ("exp-custom-b", "Very Long Custom", false, Some(5_000)),
+        ]
+    );
+    // Passed reset timestamp is preserved rather than rewritten into a full bar.
+    assert_eq!(windows[1].resets_unix_ms, Some(1_577_836_800_000));
+    assert_eq!(windows[1].used_basis_points, Some(7_500));
+}
+
+#[test]
+fn agy_rejects_invalid_fractions_malformed_or_far_future_resets_and_classifies_errors() {
+    // Missing or disabled-only usage -> Unavailable.
+    for empty in [
+        json!({"groups": []}),
+        json!({"groups": [{"name": "Gemini", "buckets": [{"id": "gemini-5h", "disabled": true, "remaining_fraction": 0.5}]}]}),
+        json!({"groups": [{"name": "Gemini", "buckets": [{"id": "gemini-5h", "remaining_fraction": null}]}]}),
+    ] {
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &empty),
+            Err(QuotaState::Unavailable),
+            "{empty}"
+        );
+    }
+
+    // Unrecognized shapes or unknown command -> Unsupported.
+    for unsupported in [
+        json!({}),
+        json!([]),
+        json!({"groups": "bad"}),
+        json!({"status": "SUCCESS", "command": {"name": "help", "data": {}}}),
+        json!({"status": "ERROR", "message": "Unknown command: /usage"}),
+    ] {
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &unsupported),
+            Err(QuotaState::Unsupported),
+            "{unsupported}"
+        );
+    }
+
+    // Signed-out / unauthenticated JSON error -> NotSignedIn.
+    for unauth in [
+        json!({"status": "ERROR", "error": "Authentication required. Please log in."}),
+        json!({"status": "FAILED", "error": {"code": "UNAUTHENTICATED", "message": "not logged in"}}),
+    ] {
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &unauth),
+            Err(QuotaState::NotSignedIn),
+            "{unauth}"
+        );
+    }
+
+    // Out-of-range or non-numeric fractions -> Invalid.
+    for bad_fraction in [json!(-0.01), json!(1.01), json!("0.5"), json!(true)] {
+        let input = json!({
+            "groups": [{
+                "name": "Gemini",
+                "buckets": [{"id": "gemini-5h", "remaining_fraction": bad_fraction}]
+            }]
+        });
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &input),
+            Err(QuotaState::Invalid),
+            "{bad_fraction}"
+        );
+    }
+
+    // Malformed, zero/negative, float, or far-future reset timestamps -> Invalid.
+    for bad_reset in [
+        json!("tomorrow"),
+        json!("9999-12-31T23:59:59Z"),
+        json!("2200-01-01T00:00:00Z"),
+        json!(0),
+        json!(-100),
+        json!(1795132800.5),
+        json!(9_999_999_999_u64),
+    ] {
+        let input = json!({
+            "groups": [{
+                "name": "Gemini",
+                "buckets": [{
+                    "id": "gemini-5h",
+                    "remaining_fraction": 0.5,
+                    "reset_time": bad_reset
+                }]
+            }]
+        });
+        assert_eq!(
+            normalize_native_quota(QuotaProvider::Agy, &input),
+            Err(QuotaState::Invalid),
+            "{bad_reset}"
+        );
+    }
+}

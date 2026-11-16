@@ -4363,7 +4363,7 @@ mod tests {
         );
         let reading = report(Settings::default(), &[]);
         let rows = top_items(&reading);
-        let expected = if cfg!(target_os = "macos") { 37 } else { 36 };
+        let expected = if cfg!(target_os = "macos") { 39 } else { 38 };
         assert_eq!(rows.len(), expected);
         let mut ids: Vec<_> = rows.iter().map(|row| row.id.as_str()).collect();
         ids.sort_unstable();
@@ -5687,5 +5687,49 @@ mod tests {
         assert!(dashboard.drain_outbox().is_empty());
         dashboard.event_action(crossterm::event::Event::Resize(120, 40));
         assert_eq!(dashboard.settings_area().width, 120);
+    }
+
+    #[test]
+    fn quota_agy_settings_edit_reset_and_surface_findings_in_settings_editor() {
+        let mut dashboard = fresh_dashboard();
+        choose_row(&mut dashboard, "quota.agy.command");
+        let text = frame_text(&mut dashboard, 120, 40);
+        assert!(
+            text.contains("Agy command") && text.contains("agy"),
+            "{text}"
+        );
+
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Esc);
+        choose_row(&mut dashboard, "quota.agy.home");
+        let text = frame_text(&mut dashboard, 120, 40);
+        assert!(
+            text.contains("Agy home") && text.contains("unset"),
+            "{text}"
+        );
+
+        dashboard.key(KeyCode::Enter);
+        dashboard.settings_editor_paste("/tmp/agy-profile");
+        dashboard.key(KeyCode::Enter);
+        let (_, path, value) = setting_request(&mut dashboard);
+        assert_eq!(path, "quota.agy.home");
+        assert_eq!(value.as_deref(), Some("\"/tmp/agy-profile\""));
+
+        let mut custom = Settings::default();
+        custom.quota.agy.home = Some(PathBuf::from("/tmp/agy-profile"));
+        let mut with_finding = report(custom, &["quota.agy.home"]);
+        with_finding.findings.push(SettingsFinding {
+            key: Some("quota.agy.extra".into()),
+            line: Some(4),
+            message: "unknown setting; ignored".into(),
+        });
+        install(&mut dashboard, with_finding);
+        choose_row(&mut dashboard, "quota.agy.home");
+        let text = frame_text(&mut dashboard, 120, 40);
+        assert!(text.contains("/tmp/agy-profile"), "{text}");
+        dashboard.key(KeyCode::Char('r'));
+        let (_, path, value) = setting_request(&mut dashboard);
+        assert_eq!(path, "quota.agy.home");
+        assert_eq!(value, None);
     }
 }

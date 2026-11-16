@@ -15,6 +15,7 @@ pub enum DispatchMessage {
     },
     RefreshHierarchy,
     NativeQuota(Box<super::quota::NativeQuotaUpdate>),
+    AgyQuota(Box<super::quota::AgyQuotaUpdate>),
     CursorQuota(Box<super::cursor_quota::Update>),
     /// `claude auth status` gave a new answer; the Claude row follows it.
     ClaudeAuth,
@@ -95,6 +96,7 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
             }
             DispatchMessage::RefreshHierarchy => dispatch_refresh_hierarchy(&state),
             DispatchMessage::NativeQuota(update) => super::quota::apply(&state, *update),
+            DispatchMessage::AgyQuota(update) => super::quota::apply_agy(&state, *update),
             DispatchMessage::CursorQuota(update) => super::cursor_quota::apply(&state, *update),
             DispatchMessage::ClaudeAuth => state.refresh_claude_quota(),
             DispatchMessage::ClaudeAccount(update) => {
@@ -486,6 +488,7 @@ pub(super) fn publish_session_changed(state: &ServerState, id: SessionId) {
         eprintln!("assignment control observation failed: {error:#}");
     }
     state.refresh_claude_quota();
+    state.refresh_agy_quota();
     if let Some(summary) = state.session_summary(id) {
         state.delegation_observations.session_changed(&summary);
         state
@@ -831,6 +834,7 @@ fn dispatch_set_view_with_resize(
     drop(registered);
     drop(retained);
     state.refresh_claude_quota();
+    state.recompute_agy_quota(false);
     state.publish_quotas();
     let _ = completion.send(DispatchCompletion::Complete);
 }

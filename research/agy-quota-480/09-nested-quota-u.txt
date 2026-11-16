@@ -1,0 +1,59 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│local (#1)  shell · 1m                                                                                               pid 36858
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off                                ┃│󰚩 OVRCR                                                                                                      [Commands] [Menu]
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│ Operator                         · Off│no session selected
+                                       │                                       │──────────────────────────────────────────────────────────────────────────────────────
+ CONSIGINT ────────────────────────────│                                       │Welcome to OVRCR
+  󰘬 main                          root │                                       │
+▌    $ local                           │                                       │1  a  Register a repository
+  󰘬 gui-consigint-auth-handoff         │                                       │2  w  Create a branch
+     $ local                           │Quota: u                               │
+     - review auth handoff    grok:4.6 │BROWSE  Space Menu  : Commands  ? Help  m Recent activity
+       Allowance Supplement Session    │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │
+     - plan snapshot restore        pi │
+                                       │
+ SPACELIFT-AGENT ──────────────────────│
+  󰘬 main                          root │
+     $ local                           │
+  󰘬 gui-spacelift-agent-pipeline-progr…│
+     $ local                           │
+     - build pipeline progress  claude │
+  󰘬 gui-spacelift-agent-scope-quality  │
+     $ local                           │
+     - review scope quality      codex │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ━━━━━─────────────────  22% │
+ mem       ━━━━━━━━━━━━━───── 34.9/48G │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │
+Codex · unavailable · retry 10m        │
+Grok · not signed in · retry 10m       │
+ Agy    5h ━━━━━━━━━━━━━━━━──────  72% │
+        7d ━━━━━━━━━─────────────  41% │
+Cursor · usage off                     │
+                                       │
+Terminal mode  Ctrl-g browse  then s Agents, Ctrl-o Quick message

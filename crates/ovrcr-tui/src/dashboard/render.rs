@@ -1737,6 +1737,8 @@ pub(super) fn label_color(label: &str) -> Color {
         SKY()
     } else if explicit_label.eq_ignore_ascii_case("grok") {
         BLUE()
+    } else if explicit_label.eq_ignore_ascii_case("agy") {
+        TEAL()
     } else if explicit_label.eq_ignore_ascii_case("terminal") {
         SUBTEXT()
     } else {
@@ -2057,5 +2059,24 @@ mod harness_agent_label_tests {
         );
         assert_eq!(session.display_name(), "my custom title");
         assert_eq!(harness_agent_name(&session), Some("pi"));
+    }
+
+    #[test]
+    fn agy_label_uses_teal_across_dark_and_light_themes() {
+        for &id in ovrcr_protocol::ThemeId::ALL {
+            let expected = crate::theme::ThemeTokens::for_id(id);
+            let _scope = crate::theme::ThemeScope::enter(expected);
+            for label in ["agy", "Agy", "AGY", "agy/gemini-3-pro", " Agy / pro "] {
+                assert_eq!(
+                    super::label_color(label),
+                    expected.teal,
+                    "theme {id}, label {label}"
+                );
+            }
+            assert_ne!(
+                expected.teal, expected.text,
+                "theme {id}: teal must be distinct from default text"
+            );
+        }
     }
 }

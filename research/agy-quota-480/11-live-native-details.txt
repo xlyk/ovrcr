@@ -1,0 +1,61 @@
+󰚩 OVRCR                                                                                                                                              [Commands] [Menu]
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓│local (#1)  shell · 0m                                                                                               pid 65980
+┃ Operator                            ┃│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┃· Off                                ┃│consigint ›
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛│
+                                       │
+ CONSIGINT ────────────────────────────│
+  󰘬 main                          root │
+▌    $ local                           │
+  󰘬 gui-consigint-auth-handoff         │
+     $ local                           │
+     - review auth handoff    grok:4.6 │
+  󰘬 gui-consigint-worktree-lifecycle   │
+     $ local                           │
+     - implement lifecycle cleanup     │
+     - review websocket shutdown       │  ┌Quota details · Esc close · ↑↓ scroll───────────────────────────────────────────┐
+     - plan snapshot restore        pi │  │Subscription allowance only.                                                    │
+                                       │  │                                                                                │
+ SPACELIFT-AGENT ──────────────────────│  │Claude · not signed in                                                          │
+  󰘬 main                          root │  │  run claude auth login                                                         │
+     $ local                           │  │                                                                                │
+  󰘬 gui-spacelift-agent-pipeline-progr…│  │Codex · unavailable                                                             │
+     $ local                           │  │  codex not found at the configured path                                        │
+     - build pipeline progress  claude │  │  next check 8:58 AM (in 10m)                                                   │
+  󰘬 gui-spacelift-agent-scope-quality  │  │                                                                                │
+     $ local                           │  │Grok · up to date                                                               │
+     - review scope quality      codex │  │  weekly  99% left · resets Wed 6:34 AM (in 2d)                                 │
+                                       │  │  as of 8:48 AM (<1m ago) · next check 8:53 AM (in 5m)                          │
+                                       │  │                                                                                │
+                                       │  │Agy · up to date                                                                │
+                                       │  │  5-hour  67% left · resets 12:38 PM (in 3h)                                    │
+                                       │  │  weekly  54% left · resets Fri 8:57 PM (in 5d)                                 │
+                                       │  │  5-hour (3p-5h)  100% left · resets 1:48 PM (in 5h)                            │
+                                       │  │  weekly (3p-weekly)  100% left · resets Nov 22, 8:48 AM (in 7d)                │
+                                       │  │  as of 8:48 AM (<1m ago) · next check 8:53 AM (in 5m)                          │
+                                       │  │                                                                                │
+                                       │  │Cursor · off                                                                    │
+                                       │  │  Cursor usage off: set `quota.cursor.dashboard = true` in dashboard.toml       │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  │                                                                                │
+                                       │  └────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+ RESOURCES ────────────────────────────│
+ cpu       ━━━━━━────────────────  26% │
+ mem       ━━━━━━━━━━━━━───── 34.9/48G │
+                                       │
+ QUOTA LEFT ───────────────────────────│
+Claude · not signed in                 │
+Codex · unavailable · retry 10m        │
+ Grok   wk ━━━━━━━━━━━━━━━━━━━━━─  99% │
+ Agy    5h ━━━━━━━━━━━━━━━───────  67% │
+        7d ━━━━━━━━━━━━──────────  54% │
+Cursor · usage off                     │
+                                       │
+BROWSE  Space Menu  : Commands  ? Help  m Recent activity

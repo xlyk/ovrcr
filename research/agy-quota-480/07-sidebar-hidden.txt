@@ -1,0 +1,7 @@
+󰚩 OVRCR                                                            [Commands] [Menu]
+local (#1)  shell · 0m                                                     pid 36858
+────────────────────────────────────────────────────────────────────────────────────
+consigint › printf 'CUA_%s\n' AGY_QUOTA_INPU
+CUA_AGY_QUOTA_INPUT_OK
+consigint ›
+BROWSE  Space Menu  : Commands  ? Help  m Recent activity
