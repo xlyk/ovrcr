@@ -7,8 +7,9 @@ fi
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 for check in HostConfiguration TerminalFontSettings; do
-    xcrun swiftc "$package/Sources/OVRCRApp/$check.swift" "$package/checks/${check}Tests.swift" -o "$stage/$check"
+    xcrun swiftc -module-cache-path "$stage/cache" "$package/Sources/OVRCRApp/$check.swift" "$package/checks/${check}Tests.swift" -o "$stage/$check"
     "$stage/$check"
 done
+python3 -I "$package/checks/check_bundle.py" "$1"
 codesign --verify --deep --strict "$1"
 python3 -I "$package/checks/launch.py" "$1"

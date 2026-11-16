@@ -1,3 +1,5 @@
+<img src="docs/images/app-icon.png" alt="OVRCR app icon" width="96" align="right">
+
 # OVRCR
 
 **Yet another place to run coding agents. This one is Rust, so it’s fast and you get to feel smug about it.**

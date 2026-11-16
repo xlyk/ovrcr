@@ -28,6 +28,7 @@ import hashlib, os, platform, stat, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 files = sorted((root / "native/bridge").glob("**/*"))
+files += [root / "native/AppIcon.icns"]
 files += [root / "scripts" / name for name in ("build-bridge.sh", "install-bridge.sh", "package-startup.sh")]
 files += [root / "crates/ovrcr-protocol/src" / name for name in ("bridge.rs", "codec.rs")]
 files += sorted((root / "research/notification-bridge/sounds").glob("*"))
@@ -82,6 +83,7 @@ contract = dict(wire=info["OVRCRServerWire"], schema=info["OVRCRBridgeSchema"], 
                 local_development=sys.argv[3] == "local-development",
                 bundle_id=info["CFBundleIdentifier"], display_name=info["CFBundleDisplayName"],
                 callback_sha256=info["OVRCRCallbackSHA256"],
+                icon_sha256=hashlib.sha256((resources / "AppIcon.icns").read_bytes()).hexdigest(),
                 entitlements_sha256=hashlib.sha256((resources / "OVRCRBridge.entitlements").read_bytes()).hexdigest(),
                 manifest=json.loads(manifest), manifest_sha256=hashlib.sha256(manifest).hexdigest(),
                 license_sha256=hashlib.sha256((resources / "NotificationSounds-LICENSE").read_bytes()).hexdigest())

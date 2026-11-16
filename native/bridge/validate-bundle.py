@@ -32,7 +32,9 @@ if contract_path.is_file():
     manifest_hash, license_hash = contract["manifest_sha256"], contract["license_sha256"]
     manifest = contract["manifest"]
     entitlements_hash = contract["entitlements_sha256"]
+    icon_hash = contract["icon_sha256"]
     callback_hash = contract["callback_sha256"]
+    assert re.fullmatch(r"[0-9a-f]{64}", icon_hash)
     assert re.fullmatch(r"[0-9a-f]{64}", callback_hash)
 else:
     wire = int(re.search(r"pub const PROTOCOL_VERSION: u32 = (\d+);",
@@ -45,6 +47,7 @@ else:
     manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
     license_hash = hashlib.sha256((source / "LICENSE").read_bytes()).hexdigest()
     entitlements_hash = hashlib.sha256((repo / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+    icon_hash = hashlib.sha256((repo / "native/AppIcon.icns").read_bytes()).hexdigest()
 info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
 if local_development:
     assert info.get("OVRCRBridgeLocalDevelopment") is True
@@ -54,6 +57,7 @@ else:
 assert info["CFBundleIdentifier"] == expected_id
 assert info["CFBundleExecutable"] == "OVRCRBridge"
 assert info["CFBundleDisplayName"] == expected_display and info["LSUIElement"] is True
+assert info.get("CFBundleIconFile") == "AppIcon"
 assert info["CFBundlePackageType"] == "APPL"
 assert info["NSAppleEventsUsageDescription"] == "OVRCR can select the existing iTerm session hosting your current Dashboard after you explicitly set up iTerm focus."
 legacy_entitlements = bundle / "Contents/OVRCRBridge.entitlements"
@@ -79,8 +83,11 @@ assert {path.name for path in (bundle / "Contents/MacOS").iterdir()} == {"OVRCRB
 assert not any(path.is_symlink() for path in bundle.rglob("*"))
 resources = bundle / "Contents/Resources"
 expected_files = {tone["file"] for tone in manifest["tones"]}
-expected_files.update(("NotificationSounds-LICENSE", "NotificationSounds-manifest.json", "OVRCRBridge.entitlements"))
+expected_files.update(("AppIcon.icns", "NotificationSounds-LICENSE", "NotificationSounds-manifest.json", "OVRCRBridge.entitlements"))
 assert {path.name for path in resources.iterdir()} == expected_files
+icon = resources / "AppIcon.icns"
+assert icon.is_file() and not icon.is_symlink()
+assert hashlib.sha256(icon.read_bytes()).hexdigest() == icon_hash
 assert hashlib.sha256((resources / "NotificationSounds-LICENSE").read_bytes()).hexdigest() == license_hash
 assert hashlib.sha256((resources / "NotificationSounds-manifest.json").read_bytes()).hexdigest() == manifest_hash
 for tone in manifest["tones"]:

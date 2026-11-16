@@ -46,9 +46,21 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-startup-package-") as temporary:
     entitlements_bytes = entitlements.read_bytes()
     expected_entitlements_hash = hashlib.sha256(
         (Path(__file__).resolve().parents[2] / "native/bridge/entitlements.plist").read_bytes()).hexdigest()
+    expected_icon_hash = hashlib.sha256(
+        (Path(__file__).resolve().parents[2] / "native/AppIcon.icns").read_bytes()).hexdigest()
     assert entitlements.is_file() and not entitlements.is_symlink()
     assert hashlib.sha256(entitlements_bytes).hexdigest() == expected_entitlements_hash
-    assert json.loads(validator.with_name("expected-contract.json").read_text())["entitlements_sha256"] == expected_entitlements_hash
+    relocated_contract = json.loads(validator.with_name("expected-contract.json").read_text())
+    assert relocated_contract["entitlements_sha256"] == expected_entitlements_hash
+    assert relocated_contract["icon_sha256"] == expected_icon_hash
+    icon = bundle / "Contents/Resources/AppIcon.icns"
+    icon_bytes = icon.read_bytes()
+    assert icon.is_file() and not icon.is_symlink()
+    assert hashlib.sha256(icon_bytes).hexdigest() == expected_icon_hash
+    icon.write_bytes(b"changed icon")
+    result = subprocess.run(validation, capture_output=True, timeout=10)
+    assert result.returncode != 0, "relocated validator accepted a changed icon"
+    icon.write_bytes(icon_bytes)
     legacy_entitlements = bundle / "Contents/OVRCRBridge.entitlements"
     assert not os.path.lexists(legacy_entitlements)
     layout_checks = 1
@@ -92,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix="ovrcr-startup-package-") as temporary:
     assert result.returncode != 0, "relocated validator accepted a changed sound"
     result = subprocess.run(["sh", str(moved / "scripts/install-bridge.sh"), str(bundle)], capture_output=True, timeout=10)
     assert result.returncode == 64 and b"non-ad-hoc" in result.stderr
-    checks = 6 + layout_checks
+    checks = 7 + layout_checks
     if local_development:
         sound.write_bytes(sound_bytes)
         contract_path = moved / "native/bridge/expected-contract.json"

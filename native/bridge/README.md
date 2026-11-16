@@ -27,7 +27,7 @@ native permission. `just run` builds a cached, validated runtime payload and ins
 beside the CLI under `~/.local/lib/ovrcr`. Interactive Dashboard startup offers
 installation or repair of the app from this payload; runtime does not compile
 Swift or require a checkout. The relocated validator carries exact contract,
-build, callback CLI, entitlement and sound/license hashes. The cache fingerprint
+build, callback CLI, app icon, entitlement and sound/license hashes. The cache fingerprint
 includes the supplied CLI bytes, so an unchanged native source cannot retain an
 older callback helper after a CLI rebuild. The package command requires the
 reviewed CLI as its second argument; `just run` supplies the CLI it just built.
@@ -37,7 +37,7 @@ to `~/.local/lib/ovrcr`; `just install-release` builds, installs and packages
 in one step. Startup refuses to repair from assets whose wire, schema or callback
 CLI differ from the running CLI and names that command instead.
 The relocated checks preserve installer refusal without an identity and reject
-changed helper metadata, missing entitlements, altered purpose and sound bytes.
+changed helper metadata, missing entitlements, altered purpose, app icon and sound bytes.
 
 Production startup defaults to no. An accepted install uses the single valid non-ad-hoc
 signing identity when available, or `OVRCR_BRIDGE_SIGNING_IDENTITY` when set.
@@ -78,7 +78,7 @@ refuses a changed designated signing requirement before replacement. A failed
 rename attempts restoration; unresolved recovery state is preserved.
 Signing/notarization and supported-release acceptance remain separate checks.
 
-`check-installer.py` runs 23 shipping-installer tests with private fixtures
+`check-installer.py` runs 34 shipping-installer tests with private fixtures
 and fake signing, copy and CLI executables. The seven production tests check fresh installation,
 matching designated requirements from either output stream, changed requirements
 and empty requirements, preserving exact old-bundle bytes on refusal. The local
