@@ -21,8 +21,9 @@ jobs:
     # The nextest selection is hash-partitioned across four shards so the suite
     # runs in parallel instead of serially. Everything that is not the test run
     # stays on shard 1, so packaging, doctests and the installed-Pi cases still
-    # execute exactly once. Four shards plus the offline Cursor job is the
-    # five-concurrent-macOS-job limit on the GitHub Free plan. Three shards were
+    # execute exactly once. Four shards stay inside the five-concurrent-macOS-job
+    # limit on the GitHub Free plan; the offline Cursor job takes the fifth slot
+    # only when the workflow is started manually. Three shards were
     # measured too: they removed all runner queueing but grew per-leg test work
     # more than that saved (1029s total against 991s here).
     runs-on: macos-latest
@@ -183,6 +184,9 @@ jobs:
 
   offline_cursor:
     name: macOS offline Cursor preflight
+    # Manual only, like the Linux jobs: skipped on pull requests and pushes and
+    # not part of the required `checks` aggregate.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -221,7 +225,7 @@ jobs:
 
   checks:
     name: checks
-    needs: [macos_checks, offline_cursor, coverage_audit]
+    needs: [macos_checks, coverage_audit]
     # Only this short aggregate survives cancellation; the acceptance jobs remain cancellable.
     if: ${{ always() }}
     runs-on: macos-latest
@@ -232,11 +236,9 @@ jobs:
         shell: bash
         env:
           MACOS_RESULT: ${{ needs.macos_checks.result }}
-          CURSOR_RESULT: ${{ needs.offline_cursor.result }}
           AUDIT_RESULT: ${{ needs.coverage_audit.result }}
         run: |
           test "$MACOS_RESULT" = success
-          test "$CURSOR_RESULT" = success
           test "$AUDIT_RESULT" = success
       - name: Reject workflow cancellation
         if: ${{ always() && cancelled() }}
