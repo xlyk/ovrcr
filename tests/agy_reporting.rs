@@ -968,3 +968,106 @@ done
     assert_eq!(supplemented_after_failure.agy.checked_unix_ms, None);
     assert!(supplemented_after_failure.agy.next_check_unix_ms.is_some());
 }
+
+#[test]
+fn setup_over_empty_disabled_statusline_enables_conversation_capture_and_reopen() {
+    let fixture = Live::idle().bounded();
+    let antigravity_dir = fixture.root.path().join(".gemini/antigravity-cli");
+    let db_dir = antigravity_dir.join("conversations");
+    std::fs::create_dir_all(&db_dir).unwrap();
+    let db = rusqlite::Connection::open(db_dir.join(format!("{FIRST}.db"))).unwrap();
+    db.execute("CREATE TABLE trajectory_meta(cascade_id TEXT)", [])
+        .unwrap();
+    db.execute(
+        "INSERT INTO trajectory_meta(cascade_id) VALUES (?1)",
+        [FIRST],
+    )
+    .unwrap();
+    drop(db);
+
+    // Seed the exact unconfigured/disabled statusLine shape Antigravity /config writes.
+    let settings_path = antigravity_dir.join("settings.json");
+    std::fs::write(
+        &settings_path,
+        r#"{"statusLine":{"command":"","enabled":false,"type":""},"verbosity":"low"}"#,
+    )
+    .unwrap();
+
+    let setup = fixture
+        .command()
+        .env_remove("OVRCR_AGENT_SOCKET")
+        .env_remove("OVRCR_AGENT_TOKEN")
+        .args(["agent", "setup", "agy", "--print"])
+        .output()
+        .unwrap();
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&setup.stdout).unwrap();
+    std::fs::write(
+        &settings_path,
+        serde_json::to_vec_pretty(&payload["settings"]["document"]).unwrap(),
+    )
+    .unwrap();
+    let hooks_path = fixture.root.path().join(".gemini/config/hooks.json");
+    std::fs::create_dir_all(hooks_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &hooks_path,
+        serde_json::to_vec_pretty(&payload["hooks"]["document"]).unwrap(),
+    )
+    .unwrap();
+
+    // Stand-in `agy` that honors `settings.json` statusLine.{type,enabled,command} like 1.5.9.
+    let native = fixture.root.path().join("agy");
+    let script = format!(
+        r#"#!/bin/sh
+id={FIRST}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --conversation)
+            id=$2
+            printf '%s\n' "$id" >> "$HOME/agy-reopened"
+            shift ;;
+    esac
+    shift
+done
+cmd=$(python3 -c '
+import json, os, pathlib
+d = json.loads((pathlib.Path(os.environ["HOME"]) / ".gemini/antigravity-cli/settings.json").read_text())
+sl = d.get("statusLine") or {{}}
+if sl.get("type") == "command" and sl.get("enabled", True) is not False and sl.get("command"):
+    print(sl["command"])
+')
+if [ -n "$cmd" ]; then
+    printf '%s\n' '{{"conversation_id":"'"$id"'","session_id":"'"$id"'","conversation_title":"Resumable Session","agent_state":"idle","model":{{"id":"fixture","display_name":"Fixture Model"}}}}' | /bin/sh -c "$cmd" >/dev/null
+fi
+"#
+    );
+    std::fs::write(&native, script).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    fixture.start_binary();
+    fixture.ready("feature/agy");
+    let session = create(&fixture, &native, &[]);
+    let exited = wait(&fixture, session, |s| !s.phase.is_live());
+    let recovery = exited.recovery.as_ref().expect("recovery summary");
+    assert_eq!(recovery.unavailable, None, "{recovery:?}");
+    assert_eq!(recovery.conversation.as_deref(), Some(FIRST));
+
+    let reopen = fixture.request(Request::ReopenSession {
+        session,
+        expected_run: exited.run,
+        acknowledge_stopped: true,
+    });
+    assert!(
+        !matches!(reopen, Response::Error { .. }),
+        "reopen failed: {reopen:?}"
+    );
+    wait(&fixture, session, |s| {
+        s.run != exited.run
+            && std::fs::read_to_string(fixture.root.path().join("agy-reopened"))
+                .is_ok_and(|log| log.lines().any(|line| line == FIRST))
+    });
+}

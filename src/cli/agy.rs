@@ -173,15 +173,13 @@ fn compose_settings_document(mut document: Value, executable: &str) -> anyhow::R
         "command".into(),
         json!(statusline_command(executable, renderer.as_deref())),
     );
-    if !had_command {
-        if status.get("stack_with_default").is_none() {
-            status.insert("stack_with_default".into(), json!(true));
-        }
-        // With no renderer of the user's there is nothing to keep disabled; a
-        // disabled reporter would look connected and never report.
-        if status.get("enabled") == Some(&json!(false)) {
-            status.insert("enabled".into(), json!(true));
-        }
+    // With no renderer of the user's there is nothing to keep disabled; a
+    // disabled reporter would look connected and never report.
+    if renderer.is_none() && status.get("enabled") == Some(&json!(false)) {
+        status.insert("enabled".into(), json!(true));
+    }
+    if status.get("stack_with_default").is_none() && !had_command {
+        status.insert("stack_with_default".into(), json!(true));
     }
     Ok(document)
 }
@@ -234,6 +232,9 @@ fn compose_hooks_document(mut document: Value, executable: &str) -> anyhow::Resu
         hook.get("enabled").is_none_or(Value::is_boolean),
         "OVRCR hook enabled must be a boolean"
     );
+    if hook.get("enabled") == Some(&json!(false)) {
+        hook.insert("enabled".into(), json!(true));
+    }
     let handlers = hook.entry("Stop").or_insert_with(|| json!([]));
     let handlers = handlers
         .as_array_mut()
@@ -386,7 +387,8 @@ fn statusline_status(
         issues.push("statusline_disabled".into());
     }
     let command = status.get("command").and_then(Value::as_str).unwrap_or("");
-    let present = exact_command(command, executable, "agy-statusline", "--stdin-json");
+    let present = status.get("type").and_then(Value::as_str) == Some("command")
+        && exact_command(command, executable, "agy-statusline", "--stdin-json");
     if !present {
         issues.push("statusline_reporter_missing".into());
     }
@@ -801,6 +803,98 @@ mod tests {
             compose_settings(&serde_json::to_string(&composed).unwrap(), "/opt/ovrcr").unwrap(),
             composed
         );
+    }
+
+    #[test]
+    fn native_empty_statusline_is_treated_as_unconfigured_and_enabled_on_setup() {
+        for raw in [
+            r#"{"statusLine":{"type":"","command":"","enabled":false},"verbosity":"low"}"#,
+            r#"{"statusLine":{"type":"","command":"","enabled":true},"verbosity":"low"}"#,
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let settings = root.path().join("settings.json");
+            let hooks = root.path().join("hooks.json");
+            std::fs::write(&settings, raw).unwrap();
+            let (status, issues, configured) = document_status(&settings, &hooks, "/opt/ovrcr");
+            assert_eq!(status, "needs_setup", "{raw}: {issues:?}");
+            assert!(
+                !issues.contains(&"statusline_invalid".to_owned()),
+                "{issues:?}"
+            );
+            assert!(issues.contains(&"statusline_reporter_missing".to_owned()));
+            assert!(!configured);
+
+            let composed = compose_settings(raw, "/opt/ovrcr").unwrap();
+            assert_eq!(composed["verbosity"], "low");
+            assert_eq!(composed["statusLine"]["type"], "command");
+            assert_eq!(composed["statusLine"]["enabled"], true);
+            assert_eq!(composed["statusLine"]["stack_with_default"], true);
+            let command = composed["statusLine"]["command"].as_str().unwrap();
+            assert!(is_owned_statusline(command));
+            assert_eq!(owned_statusline_renderer(command).unwrap(), None);
+
+            let hooks_doc = compose_hooks("{}", "/opt/ovrcr").unwrap();
+            std::fs::write(&settings, serde_json::to_vec(&composed).unwrap()).unwrap();
+            std::fs::write(&hooks, serde_json::to_vec(&hooks_doc).unwrap()).unwrap();
+            let (status, issues, configured) = document_status(&settings, &hooks, "/opt/ovrcr");
+            assert_eq!(status, "configured", "{issues:?}");
+            assert!(issues.is_empty());
+            assert!(configured);
+        }
+    }
+
+    #[test]
+    fn setup_reenables_disabled_owned_statusline_and_stop_hook_group() {
+        let mut settings_doc = compose_settings("{}", "/opt/ovrcr").unwrap();
+        settings_doc["statusLine"]["enabled"] = json!(false);
+        let repaired_settings =
+            compose_settings(&serde_json::to_string(&settings_doc).unwrap(), "/opt/ovrcr").unwrap();
+        assert_eq!(repaired_settings["statusLine"]["enabled"], true);
+        assert_eq!(
+            owned_statusline_renderer(repaired_settings["statusLine"]["command"].as_str().unwrap())
+                .unwrap(),
+            None
+        );
+
+        settings_doc["statusLine"]["enabled"] = json!(true);
+        settings_doc["statusLine"]["type"] = json!("");
+        let (mut issues, mut malformed) = (Vec::new(), false);
+        assert!(!statusline_status(
+            &settings_doc,
+            "/opt/ovrcr",
+            &mut issues,
+            &mut malformed
+        ));
+        assert!(!malformed);
+        assert!(issues.contains(&"statusline_reporter_missing".into()));
+
+        let mut hooks_doc = compose_hooks("{}", "/opt/ovrcr").unwrap();
+        hooks_doc[HOOK_NAME]["enabled"] = json!(false);
+        hooks_doc["user-hook"] =
+            json!({"enabled": false, "Stop": [{"type": "command", "command": "keep"}]});
+        let repaired_hooks =
+            compose_hooks(&serde_json::to_string(&hooks_doc).unwrap(), "/opt/ovrcr").unwrap();
+        assert_eq!(repaired_hooks[HOOK_NAME]["enabled"], true);
+        assert_eq!(repaired_hooks["user-hook"]["enabled"], false);
+    }
+
+    #[test]
+    fn unrecognized_statusline_type_remains_invalid() {
+        assert!(
+            compose_settings(
+                r#"{"statusLine":{"type":"http","command":""}}"#,
+                "/opt/ovrcr"
+            )
+            .is_err()
+        );
+        let root = tempfile::tempdir().unwrap();
+        let settings = root.path().join("settings.json");
+        let hooks = root.path().join("hooks.json");
+        std::fs::write(&settings, r#"{"statusLine":{"type":"http","command":""}}"#).unwrap();
+        let (status, issues, configured) = document_status(&settings, &hooks, "/opt/ovrcr");
+        assert_eq!(status, "unverified");
+        assert!(issues.contains(&"statusline_invalid".into()));
+        assert!(!configured);
     }
 
     #[test]
