@@ -1,9 +1,9 @@
 ---
 name: ovrcr-session-care
-description: Diagnose an OVRCR Agent that appears stuck, is waiting for input, has unavailable reporting, or exited or was interrupted. Read-only session diagnosis with evidence and recovery blockers.
+description: Diagnose a stuck, waiting, exited or interrupted OVRCR session. Carry out explicitly requested pause, resume, stop, close, reopen or supported conversation recovery on the exact session run.
 ---
 
-# Diagnose a session
+# Care for a session
 
 ## Installation
 
@@ -11,7 +11,7 @@ Bundled with OVRCR for Operator on macOS and Linux; no checkout or personal
 skill installation is needed. Use the inherited `"$OVRCR_EXECUTABLE" --version`
 and shared CLI guide, keeping the current instance configuration and socket.
 
-## Usage
+## Diagnose first
 
 1. Resolve the requested session from current metadata:
 
@@ -75,9 +75,47 @@ and shared CLI guide, keeping the current instance configuration and socket.
 
 ## Read-only boundary and failures
 
-This procedure diagnoses only. Leave processes, Unread, Input requests and
-recovery acknowledgements unchanged. Do not send Paste or Keystrokes, mark a
-response reviewed, acknowledge stopped ownership, pause/resume/stop/reopen,
-create a conversation, replay a prompt, or add watches. A next step is not an
-operation completed. A refused inventory/read is a reported gap, never a reason
-to switch instances or clear a guard. Finish without changing resources.
+A diagnosis alone leaves processes, Unread, Input requests and recovery
+acknowledgements unchanged. A suggested next step is not authorization. A refused
+inventory/read is a reported gap, never a reason to switch instances or clear a
+guard. Finish without changing resources unless the user requested an action.
+
+## Explicit control or recovery
+
+1. Resolve the target as above and keep the requested numeric ID and observed RUN.
+   A precise instruction authorizes only that action on that target. A precise
+   close request needs no additional generic confirmation; a general cleanup
+   request is a separate proposal, not permission to close anything.
+2. Use the matching inherited executable and instance. Pass the captured run to
+   the Server, rather than replacing it with a later run from another read:
+
+   | Requested effect | Command |
+   | --- | --- |
+   | Pause owned processes | `"$OVRCR_EXECUTABLE" --json pause ID --expected-run RUN` |
+   | Resume paused processes | `"$OVRCR_EXECUTABLE" --json resume ID --expected-run RUN` |
+   | Stop processes, keep the active Retained record | `"$OVRCR_EXECUTABLE" --json kill ID --expected-run RUN` |
+   | Close processes and archive the record | `"$OVRCR_EXECUTABLE" --json terminal close ID --expected-run RUN` |
+   | Reopen a Terminal shell or resume a certified Agent conversation | `"$OVRCR_EXECUTABLE" --json terminal reopen ID --expected-run RUN` |
+
+   Process resume is not Conversation resume. Agent reopen requires the certified
+   retained Conversation reference and supported native recovery; it never opens
+   a native picker or a different conversation. Terminal reopen starts its normal
+   shell, not a replay of its original command. Generic control excludes Operator
+   conversations; use the Operator's native controls instead.
+3. Preserve refusals. Changed runs require a new decision for the replacement,
+   not retrying without `--expected-run`. Uncertain/background ownership remains a
+   blocker: never use `acknowledge-stopped`, `--ack-stopped` or force to unlock
+   recovery. Preserve Dashboard input ownership and phase refusals; do not send
+   Paste, Keystrokes or answers as a substitute for a refused control operation.
+4. Refresh inventory (use `terminal list --archived` after close). Report the
+   resulting phase/run, archive state and recovery evidence. Stop is complete
+   only with successful controlled-stop evidence and resolved ownership, not
+   merely process exit. Closing a cloud attachment does not cancel remote work
+   or establish that charges stopped. A successful reopen starts a process;
+   verify the new run's `recovery.attached` and matching conversation before
+   claiming Conversation resume. Awaiting attachment is not success.
+5. Report completed, refused and uncertain outcomes separately. On a lost response,
+   reconcile the original session/run and current inventory before any retry; an
+   unknown effect is not permission to repeat it against a successor. Failed
+   recovery keeps the Retained record and evidence for a later explicit attempt.
+   Never delete history, create a fallback conversation or replay an old prompt.

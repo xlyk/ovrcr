@@ -652,6 +652,21 @@ pub enum Request {
         rows: u16,
         cols: u16,
     },
+    /// Caller-captured run, checked at action admission rather than refreshed by the CLI.
+    ControlSession {
+        session: SessionId,
+        expected_run: SessionRunId,
+        action: SessionControlAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionControlAction {
+    Pause,
+    Resume,
+    Stop,
+    /// Terminal shell or certified Agent conversation only; never a native picker.
+    Reopen,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1532,6 +1547,38 @@ mod wire_snapshot {
                     start_row: 5,
                     rows: 2,
                     cols: 3,
+                },
+            ),
+            (
+                "ControlSessionPause",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Pause,
+                },
+            ),
+            (
+                "ControlSessionResume",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Resume,
+                },
+            ),
+            (
+                "ControlSessionStop",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Stop,
+                },
+            ),
+            (
+                "ControlSessionReopen",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Reopen,
                 },
             ),
         ]
@@ -4375,13 +4422,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0459017301630168016c0104",
+            "2a045a017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0459017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f045a017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4403,6 +4450,10 @@ mod wire_snapshot {
             "412431323334353637382d313233342d343233342d383233342d3132333435363738396162630101700177016e0106636c61756465010006636c617564650106636c61756465000000106d61726b65720a636f6e74696e756564",
         ),
         ("Request::ReadScreen", "4201050203"),
+        ("Request::ControlSessionPause", "43010400"),
+        ("Request::ControlSessionResume", "43010401"),
+        ("Request::ControlSessionStop", "43010402"),
+        ("Request::ControlSessionReopen", "43010403"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -4431,18 +4482,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04590000"),
+        ("Response::NotificationNavigation", "0d045a0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0459017301630168016c0104",
+            "0e01016e045a017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010459017301630168016c0164",
+            "0f010708090101690101045a017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004590107080901016901010459017301630168016c0164",
+            "10045a010708090101690101045a017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4482,7 +4533,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0459017301630168016c0104",
+            "08016e045a017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (

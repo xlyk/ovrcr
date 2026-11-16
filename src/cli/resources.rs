@@ -137,8 +137,21 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Reopen { id, ack_stopped } => {
-            reopen_terminal(id, ack_stopped, json_output)
+        TerminalCommand::Reopen {
+            id,
+            ack_stopped,
+            expected_run,
+        } => {
+            if expected_run.is_some() {
+                control_terminal(
+                    id,
+                    expected_run,
+                    ovrcr::protocol::SessionControlAction::Reopen,
+                    json_output,
+                )
+            } else {
+                reopen_terminal(id, ack_stopped, json_output)
+            }
         }
         TerminalCommand::AcknowledgeStopped { id } => acknowledge_stopped(id, json_output),
         TerminalCommand::MarkReviewed { id, expected } => mutate_without_start(
@@ -331,7 +344,7 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                 json_output,
             )
         }
-        TerminalCommand::Close { id } => {
+        TerminalCommand::Close { id, expected_run } => {
             let session = inventory_session(id)?;
             if let Some(warning) = session.close_warning() {
                 eprintln!("{warning}");
@@ -339,18 +352,51 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             mutate_without_start(
                 Request::CloseTerminal {
                     session: SessionId(id),
-                    expected_run: session.run,
+                    expected_run: expected_run
+                        .map(ovrcr::protocol::SessionRunId)
+                        .unwrap_or(session.run),
                 },
                 json_output,
             )
         }
-        TerminalCommand::Kill { id } => mutate_without_start(
-            Request::KillSession {
-                session: SessionId(id),
-            },
+        TerminalCommand::Kill { id, expected_run } => control_terminal(
+            id,
+            expected_run,
+            ovrcr::protocol::SessionControlAction::Stop,
             json_output,
         ),
         TerminalCommand::Remove { id } => remove_terminal(id, json_output),
+    }
+}
+
+pub(super) fn control_terminal(
+    id: u64,
+    expected_run: Option<u64>,
+    action: ovrcr::protocol::SessionControlAction,
+    json_output: bool,
+) -> AppResult<()> {
+    use ovrcr::protocol::{SessionControlAction, SessionRunId};
+    let session = SessionId(id);
+    let request = match expected_run {
+        Some(run) => Request::ControlSession {
+            session,
+            expected_run: SessionRunId(run),
+            action,
+        },
+        None => match action {
+            SessionControlAction::Pause => Request::PauseSession { session },
+            SessionControlAction::Resume => Request::ResumeSession { session },
+            SessionControlAction::Stop => Request::KillSession { session },
+            SessionControlAction::Reopen => {
+                unreachable!("legacy reopen has its own reconciliation path")
+            }
+        },
+    };
+    let response = request_without_start(request)?;
+    if action == SessionControlAction::Reopen {
+        print_created_terminal(response, json_output, None)
+    } else {
+        print_mutation(response, json_output)
     }
 }
 

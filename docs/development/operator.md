@@ -93,8 +93,8 @@ by `.agents/skills/ovrcr/SKILL.md`, compiled into the binary with `include_str!`
 The CLI guide is available before the first model request in full chat and Quick
 message without a repository checkout. The immutable catalog in
 `ovrcr_protocol::operator::skills::BUNDLED_SKILLS` owns the status, coordinator,
-Workspace provisioning and read-only session-care documents and all required
-supporting assets.
+Workspace provisioning and session-care documents and all required supporting
+assets.
 Each is compiled into the matching binary, validated and atomically materialized
 before Pi launches; invalid frontmatter, unavailable assets or unsafe paths fail
 before prompting. Owned documents use `name` then a single-line `description`
@@ -115,8 +115,10 @@ procedure in `SKILL.md`. It uses existing guarded CLI registration, Git Workspac
 and managed launch routes without a new lifecycle owner. The coordinator remains
 a separate unchanged procedure, not the managed-Pi orchestrator package.
 `ovrcr-session-care` diagnoses only the requested session using current inventory,
-Reporter health and provider-supported reads; it preserves attention and ownership
-state and reports recovery blockers without performing control/recovery.
+Reporter health and provider-supported reads; diagnosis preserves attention and
+ownership state. Explicit control uses caller-captured `--expected-run`
+preconditions. Exact Agent reopen forbids picker fallback and ownership
+acknowledgement, and reports native attachment separately from process creation.
 Each cold worker launch refreshes the
 complete bundle with mode 0600 files in private directories. Existing symlinked,
 foreign-owned or writable asset paths are refused. Warm turns, session switching

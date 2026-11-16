@@ -5142,6 +5142,8 @@ mod installed_pi {
                 return plan;
             }
             let key = [
+                "Control exact session",
+                "CARE_NATIVE_SEED",
                 CARE_REQUEST,
                 STATUS_REQUEST,
                 STATUS_WATCH_REQUEST,
@@ -5187,6 +5189,8 @@ mod installed_pi {
             let marker_text = marker.display().to_string();
             let workspace_text = workspace.display().to_string();
             match (key.as_str(), step) {
+                ("Control exact session", _) => session_control_plan(body, step),
+                ("CARE_NATIVE_SEED", _) => Plan::text("CARE_NATIVE_HISTORY_PRESERVED"),
                 (CARE_REQUEST, _) => session_care_plan(body, step),
                 (STATUS_REQUEST | STATUS_PROJECT_REQUEST | STATUS_WORKSPACE_REQUEST | STATUS_SESSION_REQUEST, _) => status_plan(body, &key, step),
                 (STATUS_WATCH_REQUEST, 0) => {
@@ -5774,6 +5778,91 @@ PY"#
                 }
                 text.push_str("Inspection only; resources, Unread and Input requests unchanged.");
                 Plan::text(&text)
+            }
+        }
+    }
+
+    // Also usable by the native GUI helper: "Control exact session ID RUN ACTION".
+    fn session_control_plan(body: &Value, step: usize) -> Plan {
+        let user = operator_provider::last_user_text(body);
+        let mut words = user
+            .split("Control exact session ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace();
+        let id: u64 = words.next().unwrap().parse().unwrap();
+        let run: u64 = words.next().unwrap().parse().unwrap();
+        let action = words.next().unwrap();
+        assert!(["pause", "resume", "stop", "reopen", "close"].contains(&action));
+        let call = format!("control-{step}");
+        match step % 5 {
+            0 => {
+                let system = operator_provider::system_text(body);
+                let path = system
+                    .split("<name>ovrcr-session-care</name>")
+                    .nth(1)
+                    .unwrap()
+                    .split("<location>")
+                    .nth(1)
+                    .unwrap()
+                    .split("</location>")
+                    .next()
+                    .unwrap();
+                Plan::tool(&call, "read", json!({"path": path}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                assert!(instructions.contains("--expected-run RUN"));
+                assert!(instructions.contains("controlled-stop"));
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": "printf 'CONTROL_BEFORE='; \"$OVRCR_EXECUTABLE\" --json terminal list"}),
+                )
+            }
+            2 => {
+                let rows = marked_tool_json(body, "CONTROL_BEFORE=");
+                let row = rows
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["id"] == id)
+                    .unwrap();
+                assert_eq!(row["scope"], "Workspace");
+                // Keep the requested run even if inventory has changed; Server is the fence.
+                let command = match action {
+                    "stop" => "'kill'",
+                    "reopen" => "'terminal', 'reopen'",
+                    "close" => "'terminal', 'close'",
+                    "pause" => "'pause'",
+                    _ => "'resume'",
+                };
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\np = subprocess.run([os.environ['OVRCR_EXECUTABLE'], '--json', {command}, '{id}', '--expected-run', '{run}'], text=True, capture_output=True)\nprint('CONTROL_RESULT=' + json.dumps(dict(code=p.returncode, output=p.stdout, error=p.stderr, instance=os.environ['OVRCR_HOME'], executable=os.environ['OVRCR_EXECUTABLE'])))\nPY"
+                    )}),
+                )
+            }
+            3 => Plan::tool(
+                &call,
+                "bash",
+                json!({"command": format!(
+                    "printf 'CONTROL_AFTER='; \"$OVRCR_EXECUTABLE\" --json terminal list{}",
+                    if action == "close" { " --archived" } else { "" }
+                )}),
+            ),
+            _ => {
+                let result = marked_tool_json(body, "CONTROL_RESULT=");
+                let rows = marked_tool_json(body, "CONTROL_AFTER=");
+                let row = rows.as_array().unwrap().iter().find(|r| r["id"] == id);
+                Plan::text(&format!(
+                    "Session {id} requested run {run}: {action}; CLI exit {}. Observed: {}. {}",
+                    result["code"],
+                    row.unwrap_or(&Value::Null),
+                    result["error"]
+                ))
             }
         }
     }
@@ -7578,6 +7667,240 @@ PY"#
         live.join();
         eprintln!(
             "INSTALLED_PI_WORKSPACES_REFUSALS_PASS provider_requests={} cases=4 permission_input=false shutdown=verified",
+            provider.requests().len()
+        );
+    }
+
+    fn control_turn(
+        driver: &mut DashboardDriver,
+        live: &live::Live,
+        provider: &Provider,
+        id: u64,
+        run: u64,
+        action: &str,
+        quick: bool,
+    ) -> Value {
+        driver.reopen();
+        let conversation = driver.conversation().id;
+        let start = provider.requests().len();
+        let request = format!("Control exact session {id} {run} {action}");
+        if quick {
+            driver.quick(&request);
+        } else {
+            driver.submit(&request);
+        }
+        let history = wait_terminal(driver, conversation, provider, live);
+        wait_stopped(driver, conversation);
+        let requests = provider.requests();
+        assert_eq!(
+            requests.len() - start,
+            5,
+            "one skill read, inventory, action, refresh, answer"
+        );
+        let body = &requests.last().unwrap().body;
+        let result = marked_tool_json(body, "CONTROL_RESULT=");
+        assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+        assert_eq!(
+            result["executable"],
+            live.executable.to_string_lossy().as_ref()
+        );
+        assert!(
+            delta_text(&history).contains(&format!("Session {id} requested run {run}: {action}"))
+        );
+        result
+    }
+
+    fn wait_care_row(live: &live::Live, id: u64, predicate: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            let rows = status_cli(live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == id)
+                .unwrap();
+            if predicate(row) {
+                return row.clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "session care observation unavailable: {row}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_session_care_control_and_native_resume() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+        ));
+        provider.seed_profile(&live.config);
+        provider.seed_workspace_profile(live.root.path());
+        live.start_binary_env(&[
+            ("OVRCR_PI_EXECUTABLE", pi.as_os_str()),
+            ("PI_OFFLINE", OsStr::new("1")),
+        ]);
+        live.ready("care-control");
+        let terminal = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "care-control",
+                "--name",
+                "care-terminal",
+                "--",
+                "/bin/sh",
+            ],
+        );
+        let id = terminal["id"].as_u64().unwrap();
+        let run = terminal["run"].as_u64().unwrap();
+        live.own_group(terminal["pid"].as_u64().unwrap() as libc::pid_t);
+        let mut driver = DashboardDriver::connect(&live);
+        driver.select_fixture_workspace();
+        driver.open();
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "pause", false)["code"],
+            0
+        );
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "paused");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "resume", true)["code"],
+            0
+        );
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "running");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        assert_eq!(stopped["recovery"]["requires_ack"], false);
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "reopen", true)["code"],
+            0
+        );
+        let replacement = wait_care_row(&live, id, |r| r["run"] == run + 1);
+        live.own_group(replacement["pid"].as_u64().unwrap() as libc::pid_t);
+        let refused = control_turn(&mut driver, &live, &provider, id, run, "stop", false);
+        assert_ne!(refused["code"], 0);
+        assert!(refused["error"].as_str().unwrap().contains("Conflict"));
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "running");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run + 1, "close", true)["code"],
+            0
+        );
+        assert!(
+            status_cli(&live, &["terminal", "list", "--archived"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == id)
+        );
+
+        // Real managed Pi creates its own history and certified Reporter reference.
+        let native_history = live.root.path().join("native-history");
+        let native = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "care-control",
+                "--name",
+                "care-native",
+                "--",
+                live.executable.to_str().unwrap(),
+                "agent",
+                "run",
+                "pi",
+                "--",
+                pi.to_str().unwrap(),
+                "--no-extensions",
+                "--no-skills",
+                "--no-context-files",
+                "--no-prompt-templates",
+                "--no-themes",
+                "--no-approve",
+                "--session-dir",
+                native_history.to_str().unwrap(),
+                "--",
+                "CARE_NATIVE_SEED",
+            ],
+        );
+        let id = native["id"].as_u64().unwrap();
+        let run = native["run"].as_u64().unwrap();
+        live.own_group(native["pid"].as_u64().unwrap() as libc::pid_t);
+        wait_care_row(&live, id, |r| r["activity"] == "response_ready");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        assert_eq!(stopped["recovery"]["requires_ack"], false);
+        let reference = stopped["recovery"]["conversation"].clone();
+        assert!(!reference.is_null(), "native reference: {stopped}");
+        let requests_before_resume = provider.requests().len();
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "reopen", true)["code"],
+            0
+        );
+        let resumed = wait_care_row(&live, id, |r| r["recovery"]["attached"] == true);
+        assert_eq!(resumed["run"], run + 1);
+        assert_eq!(resumed["recovery"]["conversation"], reference);
+        live.own_group(resumed["pid"].as_u64().unwrap() as libc::pid_t);
+        assert_eq!(
+            provider.requests().len() - requests_before_resume,
+            5,
+            "resume must not replay a prompt"
+        );
+        let screen = driver.terminal_text(ovrcr::protocol::SessionId(id));
+        assert!(
+            screen.contains("CARE_NATIVE_HISTORY_PRESERVED"),
+            "native history was not restored: {screen}"
+        );
+
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run + 1, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        // The fixture alone makes its history unavailable, preserving its bytes.
+        let files = std::fs::read_dir(&native_history)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files.len(),
+            1,
+            "only the original native conversation exists"
+        );
+        let history_path = &files[0];
+        assert_eq!(session_header(history_path)["id"], reference);
+        let history_bytes = std::fs::read(history_path).unwrap();
+        let saved = history_path.with_extension("saved");
+        std::fs::rename(history_path, &saved).unwrap();
+        let failed = control_turn(&mut driver, &live, &provider, id, run + 1, "reopen", false);
+        assert_ne!(failed["code"], 0);
+        let retained = wait_care_row(&live, id, |_| true);
+        assert_eq!(retained["run"], stopped["run"]);
+        assert_eq!(retained["phase"], "exited");
+        assert_eq!(retained["recovery"]["conversation"], reference);
+        assert!(!retained["recovery"]["failure"].is_null());
+        assert_eq!(std::fs::read(saved).unwrap(), history_bytes);
+        eprintln!(
+            "INSTALLED_PI_SESSION_CONTROL_PASS terminal_actions=6 stale_refusals=1 native_resumes=1 recovery_failures=1 provider_requests={}",
             provider.requests().len()
         );
     }

@@ -448,6 +448,27 @@ processes, Unread, Input requests and recovery acknowledgements. Controlled
 provider replies derive from those observations; they do not establish an
 unconstrained model's inference quality or native keyboard behavior.
 
+Exact-run session control and native recovery (installed Pi):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_session_care_control_and_native_resume -- --ignored --nocapture
+cargo test -p ovrcr --test retained_ownership
+```
+
+Full and Quick requests execute real pause/resume, controlled stop, Terminal
+reopen and close through the inherited CLI. A managed native Pi creates its own
+history and certified reference, then Operator stops and resumes it; matching
+attachment, restored native history and no replayed model request are asserted.
+Missing history refuses recovery without a picker or lost record. The retained
+ownership suite forces replacement-run admission, proves the replacement PID and
+Reporter capability survive, and checks unresolved ownership refusals. The GUI
+provider accepts `Control exact session ID RUN ACTION` (pause, resume, stop,
+reopen, close) for the same controlled-provider walkthrough; only use IDs/runs
+from its task-owned instance. Native keyboard/visible results remain a separate
+gate, not established by these headless tests.
+
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):
 

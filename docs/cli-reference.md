@@ -33,6 +33,7 @@ the current directory. A new terminal can omit its name for a stable generated n
 
 `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`,
 `project add`, `workspace create`, and the dashboard start a server on demand.
+`terminal reopen --expected-run RUN` instead requires the running Server.
 
 Read commands never start one. They never write, migrate the registry, or launch
 a shell. With no server running, project and workspace queries read the existing
@@ -294,6 +295,16 @@ retry still attempts the exact conversation. Providers without a native picker k
 the error. The shell remains usable when the agent exits. Reopen starts the server
 if it is not running. With `--json`, reopen returns the terminal object and rename
 returns `{"ok":true}`.
+
+For caller-bound control, capture `run` from `terminal list --json` and pass
+`--expected-run RUN` to `pause`, `resume`, `kill`, `terminal kill`,
+`terminal close`, or `terminal reopen`. The Server refuses a changed run at action
+admission; the CLI never substitutes a newer inventory run. Existing commands
+without the flag retain their behavior. Fenced reopen requires the running
+Server and cannot combine with `--ack-stopped`: Terminal reopen starts a fresh
+shell; Agent reopen requires certified exact recovery and refuses missing or
+invalid references without native-picker fallback. A successful process launch
+is not attachment proof; inspect `recovery.attached` and the conversation identity.
 
 CLI inventory remains passive. The Dashboard's first visible display can recover
 an eligible interrupted Agent after a verified reboot; it never acknowledges
