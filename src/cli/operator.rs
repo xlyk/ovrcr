@@ -56,7 +56,7 @@ fn setup(json_output: bool) -> AppResult<()> {
         // Setup is the one place a native launch failure is not a turn failure.
         _ => RuntimeError::new(
             ErrorCode::Internal,
-            "Could not start native Pi setup; install pi 0.87.1 and run it again.",
+            "Could not start native Pi setup; install pi and run it again.",
         ),
     })
 }

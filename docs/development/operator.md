@@ -3,8 +3,8 @@
 User setup and controls are in [Use the built-in operator](../operator.md).
 
 The Operator is one durable conversation per OVRCR instance, driven by the
-installed [pi](https://github.com/earendil-works/pi) coding agent 0.87.1 through
-its RPC protocol. There is no embedded model client, no Rig agent and no custom
+installed [pi](https://github.com/earendil-works/pi) coding agent through its RPC
+protocol. Pi 0.87.1 is the tested version, not a requirement. There is no embedded model client, no Rig agent and no custom
 OAuth: pi owns authentication, model catalog, the agent loop, its four native
 tool definitions, inference and context management. OVRCR adds `watch_sessions`.
 The Server stays synchronous; a managed same-executable worker owns pi for a
@@ -34,7 +34,7 @@ work lease, that process stays live across warm user turns on the same run.
 
 `OVRCR_PI_EXECUTABLE`, when set and nonempty, names the pi executable; otherwise
 `pi` is resolved on `PATH`. A missing executable is reported as
-`Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.` and no turn
+`Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.` and no turn
 proceeds.
 
 ## Dedicated profile
@@ -392,6 +392,12 @@ worker validates the five-tool allowlist, the id and argument bounds, requires
 the matching completed assistant message with `stopReason` `toolUse` or `stop`
 and the same call id/name/arguments, flushes preceding assistant text, commits
 `ToolCall`, and only then answers `confirmed:true`. Admissions are serialized.
+Arguments compare by meaning: object keys whose value is null are ignored on
+both sides, because some Pi versions (1.3.0) fill omitted optional arguments
+with null in only one of the two. Any other difference refuses the call with
+`Pi tool arguments differ from the model's call; the tool was refused.`
+`ToolCall` journals the assistant message's arguments exactly as the model sent
+them, never the normalized copy.
 
 Results use an awaited dialog titled `OVRCR Operator tool result` carrying
 `{toolCallId, output, truncated, status}`. The worker maps `succeeded`/`failed`/
@@ -429,13 +435,14 @@ required-extension errors fail the turn.
 
 Fixed user-facing failures, never with native stderr or provider bodies:
 
-- `Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.`
+- `Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.`
 - `No Pi model selected; run ovrcr operator setup.`
 - `Configured Operator model is unavailable in the dedicated Pi profile.`
 - `Operator Pi context is unavailable; saved data was preserved.`
 - `Pi Operator integration is unavailable; no prompt was sent.`
 - `Pi request failed; inspect the partial journal before retrying.`
 - `Unsupported Pi interaction; the turn was stopped.`
+- `Pi tool arguments differ from the model's call; the tool was refused.`
 
 pi's placeholder model object (`provider`/`id` both `unknown`) is normalized to
 "no model selected".

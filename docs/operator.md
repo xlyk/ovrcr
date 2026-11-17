@@ -2,9 +2,11 @@
 
 OVRCR's Operator is one persistent conversation per OVRCR instance, run by the
 installed [pi](https://github.com/earendil-works/pi) coding agent through its RPC
-protocol. There is one conversation, not one per project or workspace: the
-workspace or session you capture is sent with each message, so the same
-conversation can work on different targets without losing its history.
+protocol. Pi 0.87.1 is the tested version, not a requirement; Pi versions that
+fill omitted optional tool arguments with null are accepted. There is one
+conversation, not one per project or workspace: the workspace or session you
+capture is sent with each message, so the same conversation can work on
+different targets without losing its history.
 
 Opening history or cancelling an unsent Quick message starts no worker. Submit
 starts it lazily. With no watched work, it exits after the turn; active watches

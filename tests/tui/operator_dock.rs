@@ -451,7 +451,7 @@ fn the_five_sidebar_states_show_timing_and_activity_without_a_reply_title() {
     }
 
     for failure in [
-        "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+        "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.",
         "No Pi model selected; run ovrcr operator setup.",
         "Configured Operator model is unavailable in the dedicated Pi profile.",
     ] {

@@ -1117,7 +1117,7 @@ fn operator_mixed_controls_cross_gui_bytes_and_real_dashboard_pty() -> Result<()
         const FIXED_FAILURES: [&str; 7] = [
             "No Pi model selected; run ovrcr operator setup.",
             "Configured Operator model is unavailable in the dedicated Pi profile.",
-            "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+            "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.",
             "Operator Pi context is unavailable; saved data was preserved.",
             "Pi Operator integration is unavailable; no prompt was sent.",
             "Pi request failed; inspect the partial journal before retrying.",

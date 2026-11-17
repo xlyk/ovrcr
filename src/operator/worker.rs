@@ -39,6 +39,8 @@ const REQUEST_FAILED: &str = "Pi request failed; inspect the partial journal bef
 const ALREADY_COMPACTED: &str = "Operator context is already compacted.";
 const NOTHING_TO_COMPACT: &str = "Operator context has nothing to compact yet.";
 const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was stopped.";
+const ARGUMENTS_MISMATCH: &str =
+    "Pi tool arguments differ from the model's call; the tool was refused.";
 
 /// The trusted extension's startup contract and watch-lease status keys.
 const CONTRACT_KEY: &str = "ovrcr_operator_contract";
@@ -3138,27 +3140,53 @@ fn admit(
         .as_str()
         .ok_or(Failure::Failed(REQUEST_FAILED))?;
     let input = &payload["input"];
-    let arguments = serde_json::to_string(input).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
+    let bounded_json = |value: &Value| {
+        serde_json::to_string(value)
+            .ok()
+            .filter(|text| text.len() <= MAX_OPERATOR_ARGUMENT_BYTES && !text.contains('\0'))
+    };
     let well_formed = valid_token(id)
         && TOOLS.contains(&name)
         && input.is_object()
-        && arguments.len() <= MAX_OPERATOR_ARGUMENT_BYTES
-        && !arguments.contains('\0');
+        && bounded_json(input).is_some();
     // Admissions are serialized: the previous result must already be durable.
     let serial = state.pending.is_none();
     // Bound the admitted-call ledger; a peer that never ends calls cannot grow it.
     let bounded = state.admitted.len() < MAX_ADMITTED_CALLS;
-    let matched = state.last_assistant.as_ref().is_some_and(|turn| {
-        matches!(turn.stop.as_str(), "toolUse" | "stop")
-            && turn
-                .calls
+    let call = state
+        .last_assistant
+        .as_ref()
+        .filter(|turn| matches!(turn.stop.as_str(), "toolUse" | "stop"))
+        .and_then(|turn| {
+            turn.calls
                 .iter()
-                .any(|call| call.id == id && call.name == name && &call.arguments == input)
-    });
-    if !well_formed || !serial || !bounded || !matched {
+                .find(|call| call.id == id && call.name == name)
+        });
+    let Some(call) = call.filter(|_| well_formed && serial && bounded) else {
         return Err(Failure::Failed(REQUEST_FAILED));
+    };
+    // Some Pi versions fill omitted optional arguments with null on one side
+    // only; that is the same call. Any other difference is refused.
+    if without_null_fields(&call.arguments) != without_null_fields(input) {
+        return Err(Failure::Failed(ARGUMENTS_MISMATCH));
     }
+    // Journal exactly what the model sent, under the same bounds as the input.
+    let arguments = bounded_json(&call.arguments).ok_or(Failure::Failed(REQUEST_FAILED))?;
     Ok((id.to_owned(), name.to_owned(), arguments))
+}
+
+/// Recursively drops object keys whose value is null; array items are kept.
+fn without_null_fields(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(_, item)| !item.is_null())
+                .map(|(key, item)| (key.clone(), without_null_fields(item)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_null_fields).collect()),
+        other => other.clone(),
+    }
 }
 
 fn valid_token(value: &str) -> bool {
@@ -3749,6 +3777,75 @@ mod tests {
         assert!(admit(&other, &state).is_err());
         let unknown = json!({"toolCallId":"call-1","toolName":"grep","input":{"command":"true"}});
         assert!(admit(&unknown, &state).is_err());
+    }
+
+    #[test]
+    fn admission_ignores_null_fields_and_journals_the_models_arguments() {
+        let state_with = |arguments: Value| {
+            let mut state = TurnState::new(
+                "session".into(),
+                PathBuf::from("/tmp"),
+                PathBuf::from("/tmp"),
+            );
+            state.last_assistant = Some(AssistantTurn {
+                stop: "toolUse".into(),
+                calls: vec![ToolCallBlock {
+                    id: "call-1".into(),
+                    name: "read".into(),
+                    arguments,
+                }],
+            });
+            state
+        };
+        let payload = |input: Value| json!({"toolCallId":"call-1","toolName":"read","input":input});
+        let plain = json!({"path":"a.rs"});
+        let filled = json!({"path":"a.rs","offset":null,"limit":null});
+        let nested_plain = json!({"path":"a.rs","opts":{"mode":"x","list":[{"k":1}]}});
+        let nested_filled =
+            json!({"path":"a.rs","opts":{"mode":"x","depth":null,"list":[{"k":1,"j":null}]}});
+        // (model's arguments, tool_call input): Pi 0.87.1 (equal, no nulls),
+        // Pi 1.3.0 (null-filled), nulls on either side only, nested nulls.
+        for (model, input) in [
+            (&plain, &plain),
+            (&filled, &filled),
+            (&plain, &filled),
+            (&filled, &plain),
+            (&nested_plain, &nested_filled),
+            (&nested_filled, &nested_plain),
+        ] {
+            let (_, _, journaled) = admit(&payload(input.clone()), &state_with(model.clone()))
+                .unwrap_or_else(|_| panic!("{model} vs {input} must be admitted"));
+            // The journal keeps exactly what the model sent.
+            assert_eq!(journaled, serde_json::to_string(model).unwrap());
+        }
+        // Any other difference is still refused, with a distinct failure.
+        for (model, input) in [
+            (json!({"path":"a.rs"}), json!({"path":"b.rs"})),
+            (json!({"path":"a.rs"}), json!({"path":"a.rs","offset":0})),
+            (
+                json!({"path":"a.rs","offset":5}),
+                json!({"path":"a.rs","offset":null}),
+            ),
+            (
+                json!({"path":"a.rs","list":[null]}),
+                json!({"path":"a.rs","list":[]}),
+            ),
+            (
+                json!({"path":"a.rs","opts":{"d":1}}),
+                json!({"path":"a.rs","opts":{"d":null}}),
+            ),
+        ] {
+            assert_eq!(
+                admit(&payload(input), &state_with(model)),
+                Err(Failure::Failed(ARGUMENTS_MISMATCH))
+            );
+        }
+        // An unmatched id stays the generic refusal.
+        let other = json!({"toolCallId":"call-2","toolName":"read","input":plain});
+        assert_eq!(
+            admit(&other, &state_with(plain.clone())),
+            Err(Failure::Failed(REQUEST_FAILED))
+        );
     }
 
     #[test]
