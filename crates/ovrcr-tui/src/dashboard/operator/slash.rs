@@ -7,6 +7,7 @@ pub(super) enum SlashCommandKind {
     Copy,
     Thinking,
     Model,
+    Skills,
     New,
     Session,
     Compact,
@@ -72,11 +73,19 @@ pub(super) const COMMANDS: &[SlashCommandSpec] = &[
         description: "Inspect or switch Operator conversation branch",
         takes_args: false,
     },
+    SlashCommandSpec {
+        kind: SlashCommandKind::Skills,
+        name: "skills",
+        usage: "/skills [request]",
+        description: "Browse shipped skills; prepare without sending",
+        takes_args: true,
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ParsedDraft<'a> {
     Prompt,
+    Skill { name: &'a str, request: &'a str },
     Slash { name: &'a str, args: &'a str },
 }
 
@@ -84,16 +93,23 @@ pub(super) enum ParsedDraft<'a> {
 /// whitespace and no second `/` before whitespace or end-of-input) is parsed as
 /// a slash command; multi-segment paths (`/etc/hosts`, `/Users/...`) and
 /// leading-whitespace drafts (` /copy`) pass through as ordinary prompts.
+/// `/skill:` is reserved even when its identity is malformed, never a path.
 pub(super) fn parse_draft(draft: &str) -> ParsedDraft<'_> {
     let Some(rest) = draft.strip_prefix('/') else {
         return ParsedDraft::Prompt;
     };
     let split_at = rest.find(char::is_whitespace).unwrap_or(rest.len());
     let name = &rest[..split_at];
+    let args = rest[split_at..].trim();
+    if let Some(name) = name.strip_prefix("skill:") {
+        return ParsedDraft::Skill {
+            name,
+            request: args,
+        };
+    }
     if name.contains('/') {
         return ParsedDraft::Prompt;
     }
-    let args = rest[split_at..].trim();
     ParsedDraft::Slash { name, args }
 }
 
@@ -143,7 +159,7 @@ pub(super) fn unknown_command_error(name: &str) -> String {
     };
     format!(
         "Unknown slash command \"{token}\". Available: {}.",
-        available_names()
+        format_args!("{}, /skill:<name> [request]", available_names())
     )
 }
 

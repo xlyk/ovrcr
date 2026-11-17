@@ -59,6 +59,8 @@ pub(super) enum SettingsCommand {
 #[derive(Subcommand)]
 pub(super) enum Command {
     /// Set up the dedicated Pi account Operator uses, or list its models.
+    /// In full Operator or Quick message, send /skill:<name> [request] to invoke
+    /// a shipped procedure explicitly (for example /skill:ovrcr-status).
     Operator {
         #[command(subcommand)]
         command: OperatorCommand,
@@ -145,11 +147,26 @@ pub(super) enum Command {
         follow: bool,
     },
     /// Stop a session's process group and keep its final screen.
-    Kill { id: u64 },
+    Kill {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Pause a running Workspace session with SIGSTOP; Operator conversations are not terminal targets.
-    Pause { id: u64 },
+    Pause {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Resume a paused Workspace session with SIGCONT; Operator conversations are not terminal targets.
-    Resume { id: u64 },
+    Resume {
+        id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
     /// Inspect or remove a session record.
     Session {
         #[command(subcommand)]
@@ -296,6 +313,17 @@ pub(super) enum WorkspaceCommand {
         #[command(flatten)]
         target: WorkspaceSelect,
     },
+    /// Inspect exact clean, unused non-Root state for a separate removal proposal; changes nothing.
+    RemovalPreview {
+        #[command(flatten)]
+        target: WorkspaceSelect,
+    },
+    /// Remove only the separately approved preview state. Never force, save WIP, or archive sessions.
+    RemoveApproved {
+        /// Original JSON from removal-preview, not refreshed after approval.
+        #[arg(long, value_parser = parse_workspace_removal)]
+        expected: ovrcr::protocol::WorkspaceRemovalObservation,
+    },
     /// Remove a worktree and archive stopped sessions. --force discards changes and acknowledges uncertain stopped rows; live sessions still block.
     #[command(visible_alias = "delete")]
     Remove {
@@ -305,6 +333,13 @@ pub(super) enum WorkspaceCommand {
         #[arg(long)]
         force: bool,
     },
+}
+
+fn parse_workspace_removal(
+    value: &str,
+) -> Result<ovrcr::protocol::WorkspaceRemovalObservation, String> {
+    serde_json::from_str(value)
+        .map_err(|error| format!("invalid Workspace removal observation: {error}"))
 }
 
 #[derive(Subcommand)]
@@ -340,6 +375,9 @@ pub(super) enum TerminalCommand {
         id: u64,
         #[arg(long)]
         ack_stopped: bool,
+        /// Require this exact run and certified Agent recovery; never open a native picker or acknowledge ownership.
+        #[arg(long, conflicts_with = "ack_stopped")]
+        expected_run: Option<u64>,
     },
     /// Confirm old processes stopped without launching a session. Required after unverified or natural exits.
     AcknowledgeStopped {
@@ -402,6 +440,16 @@ pub(super) enum TerminalCommand {
     /// Stop currently owned work and archive the session record.
     Close {
         id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
+    },
+    /// Archive an approved stopped record only; refuse live, uncertain or protected work.
+    ArchiveStopped {
+        id: u64,
+        /// Exact run listed in the approved proposal; never refreshed implicitly.
+        #[arg(long)]
+        expected_run: u64,
     },
     /// Return an archived record to the active list without launching.
     Unarchive {
@@ -409,6 +457,9 @@ pub(super) enum TerminalCommand {
     },
     Kill {
         id: u64,
+        /// Refuse unless this inventory run still owns the session.
+        #[arg(long)]
+        expected_run: Option<u64>,
     },
     Remove {
         id: u64,
@@ -705,6 +756,7 @@ mod launch_cli_tests {
             vec!["ovrcr", "terminal", "rename", "7", "--automatic"],
             vec!["ovrcr", "terminal", "reopen", "7"],
             vec!["ovrcr", "terminal", "reopen", "7", "--ack-stopped"],
+            vec!["ovrcr", "terminal", "reopen", "7", "--expected-run", "3"],
             vec!["ovrcr", "terminal", "acknowledge-stopped", "7"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
@@ -718,5 +770,24 @@ mod launch_cli_tests {
                 .is_err()
         );
         assert!(Cli::try_parse_from(["ovrcr", "terminal", "relaunch", "7"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "terminal",
+                "reopen",
+                "7",
+                "--expected-run",
+                "3",
+                "--ack-stopped"
+            ])
+            .is_err()
+        );
+        for command in ["pause", "resume", "kill"] {
+            assert!(Cli::try_parse_from(["ovrcr", command, "7"]).is_ok());
+            assert!(Cli::try_parse_from(["ovrcr", command, "7", "--expected-run", "3"]).is_ok());
+            assert!(
+                Cli::try_parse_from(["ovrcr", command, "7", "--expected-run", "invalid"]).is_err()
+            );
+        }
     }
 }

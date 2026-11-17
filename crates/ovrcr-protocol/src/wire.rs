@@ -652,6 +652,42 @@ pub enum Request {
         rows: u16,
         cols: u16,
     },
+    /// Caller-captured run, checked at action admission rather than refreshed by the CLI.
+    ControlSession {
+        session: SessionId,
+        expected_run: SessionRunId,
+        action: SessionControlAction,
+    },
+    /// Read-only eligibility and exact state for a separate Workspace-removal approval.
+    PreviewWorkspaceRemoval {
+        project: String,
+        workspace: String,
+    },
+    /// Never force, save WIP, acknowledge ownership or archive active-list records.
+    RemoveApprovedWorkspace(Box<WorkspaceRemovalObservation>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRemovalObservation {
+    pub project: String,
+    pub repo: PathBuf,
+    pub workspace_root: PathBuf,
+    pub workspace: crate::WorkspaceRecord,
+    pub head: String,
+    /// All associated records are already archived; run changes invalidate approval.
+    pub archived_sessions: Vec<(SessionId, SessionRunId)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionControlAction {
+    Pause,
+    Resume,
+    Stop,
+    /// Terminal shell or certified Agent conversation only; never a native picker.
+    Reopen,
+    /// Archive only an unprotected, ownership-resolved stopped record; never stop it.
+    ArchiveStopped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -754,6 +790,7 @@ pub enum Response {
     InitialPromptIntent(InitialPromptIntentId),
     InitialPromptIntents(Vec<InitialPromptIntentSnapshot>),
     ScreenWindow(Box<ScreenWindow>),
+    WorkspaceRemoval(Box<WorkspaceRemovalObservation>),
 }
 
 /// Which create/remove/close a Lifecycle job performed.
@@ -1113,6 +1150,57 @@ mod wire_snapshot {
             name: "custom".into(),
         };
         assert!(request.validate().is_err());
+    }
+
+    fn workspace_removal() -> WorkspaceRemovalObservation {
+        WorkspaceRemovalObservation {
+            project: "p".into(),
+            repo: "/r".into(),
+            workspace_root: "/w".into(),
+            workspace: crate::WorkspaceRecord {
+                id: "w".into(),
+                path: "/w/a".into(),
+                branch: "b".into(),
+                git_identity: Some("g".into()),
+                setup_pending: false,
+            },
+            head: "h".into(),
+            archived_sessions: vec![(SessionId(1), SessionRunId(4))],
+        }
+    }
+
+    #[test]
+    fn workspace_removal_observation_round_trips_and_requires_original_state() {
+        let expected = workspace_removal();
+        let json = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            serde_json::from_value::<WorkspaceRemovalObservation>(json.clone()).unwrap(),
+            expected
+        );
+        for key in [
+            "project",
+            "repo",
+            "workspace_root",
+            "workspace",
+            "head",
+            "archived_sessions",
+        ] {
+            let mut missing = json.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(
+                serde_json::from_value::<WorkspaceRemovalObservation>(missing).is_err(),
+                "{key}"
+            );
+        }
+        let mut forced = json;
+        forced["force"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<WorkspaceRemovalObservation>(forced).is_err());
+        let request = Request::RemoveApprovedWorkspace(Box::new(expected));
+        let bytes = bincode::serde::encode_to_vec(&request, bincode::config::standard()).unwrap();
+        let (decoded, used): (Request, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(decoded, request);
+        assert_eq!(used, bytes.len());
     }
 
     fn requests() -> Vec<(&'static str, Request)> {
@@ -1534,11 +1622,66 @@ mod wire_snapshot {
                     cols: 3,
                 },
             ),
+            (
+                "ControlSessionPause",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Pause,
+                },
+            ),
+            (
+                "ControlSessionResume",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Resume,
+                },
+            ),
+            (
+                "ControlSessionStop",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Stop,
+                },
+            ),
+            (
+                "ControlSessionReopen",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::Reopen,
+                },
+            ),
+            (
+                "ControlSessionArchiveStopped",
+                Request::ControlSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    action: SessionControlAction::ArchiveStopped,
+                },
+            ),
+            (
+                "PreviewWorkspaceRemoval",
+                Request::PreviewWorkspaceRemoval {
+                    project: "p".into(),
+                    workspace: "w".into(),
+                },
+            ),
+            (
+                "RemoveApprovedWorkspace",
+                Request::RemoveApprovedWorkspace(Box::new(workspace_removal())),
+            ),
         ]
     }
 
     fn responses() -> Vec<(&'static str, Response)> {
         vec![
+            (
+                "WorkspaceRemoval",
+                Response::WorkspaceRemoval(Box::new(workspace_removal())),
+            ),
             ("Ok", Response::Ok),
             (
                 "Hierarchy",
@@ -2811,9 +2954,23 @@ mod wire_snapshot {
             (
                 "Submit",
                 OperatorRequest::Submit {
+                    skill: None,
                     conversation: identity.conversation,
                     expected_run: SessionRunId(0),
                     text: "hello".into(),
+                    context: context.clone(),
+                },
+            ),
+            (
+                "SubmitSkill",
+                OperatorRequest::Submit {
+                    skill: Some(crate::OperatorSkillSelection {
+                        name: "ovrcr-status".into(),
+                        revision: 1,
+                    }),
+                    conversation: identity.conversation,
+                    expected_run: SessionRunId(0),
+                    text: String::new(),
                     context: context.clone(),
                 },
             ),
@@ -3001,6 +3158,19 @@ mod wire_snapshot {
             ),
             ("Retire", OperatorWorkerCommand::Retire { identity }),
             ("Stop", OperatorWorkerCommand::Stop { identity }),
+            (
+                "SetWatches",
+                OperatorWorkerCommand::SetWatches {
+                    identity: run_identity,
+                    update: OperatorWatchUpdate {
+                        revision: 1,
+                        targets: vec![OperatorWatchTarget {
+                            session: SessionId(2),
+                            run: SessionRunId(4),
+                        }],
+                    },
+                },
+            ),
         ] {
             all.push((
                 format!("Request::OperatorWorker::{name}"),
@@ -3025,6 +3195,7 @@ mod wire_snapshot {
                         ordinal: 1,
                         turn: identity.turn,
                         content: OperatorMessageContent::User {
+                            skill: None,
                             text: "hello".into(),
                             context: context.clone(),
                         },
@@ -3124,6 +3295,7 @@ mod wire_snapshot {
                     identity,
                     model: Some("openai/model".into()),
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "hello".into(),
                         context: context.clone(),
                         async_wakeup: false,
@@ -3172,6 +3344,7 @@ mod wire_snapshot {
                     identity,
                     model: None,
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "warm".into(),
                         context: context.clone(),
                         async_wakeup: false,
@@ -3195,6 +3368,7 @@ mod wire_snapshot {
                     identity,
                     model: None,
                     submission: OperatorWorkerSubmission::Prompt {
+                        skill: None,
                         text: "watch report".into(),
                         context: context.clone(),
                         async_wakeup: true,
@@ -3215,6 +3389,15 @@ mod wire_snapshot {
             encode(&Response::OperatorWorker(OperatorWorkerResult::Retired {
                 identity,
             })),
+        ));
+        all.push((
+            "Response::OperatorWorker::WatchesSet".into(),
+            encode(&Response::OperatorWorker(
+                OperatorWorkerResult::WatchesSet {
+                    identity: run_identity,
+                    revision: 1,
+                },
+            )),
         ));
         all.push((
             "ServerEvent::OperatorChanged".into(),
@@ -4357,13 +4540,13 @@ mod wire_snapshot {
         ("Request::Events", "2901"),
         (
             "Request::NavigateNotification",
-            "2a0458017301630168016c0104",
+            "2a045c017301630168016c0104",
         ),
         ("Request::ConfirmNotificationNavigation", "2b016e"),
         ("Request::NotificationNavigationApplied", "2c016e"),
         ("Request::DashboardBridgeIdentity", "2d010169"),
         ("Request::PrepareITermFocus", "2e"),
-        ("Request::BridgeOwner", "2f0458017301630168016c01640103"),
+        ("Request::BridgeOwner", "2f045c017301630168016c01640103"),
         ("Request::SaveWorkspaceWip", "3001610162"),
         ("Request::AnswerWipSave", "310161016201"),
         (
@@ -4385,9 +4568,23 @@ mod wire_snapshot {
             "412431323334353637382d313233342d343233342d383233342d3132333435363738396162630101700177016e0106636c61756465010006636c617564650106636c61756465000000106d61726b65720a636f6e74696e756564",
         ),
         ("Request::ReadScreen", "4201050203"),
+        ("Request::ControlSessionPause", "43010400"),
+        ("Request::ControlSessionResume", "43010401"),
+        ("Request::ControlSessionStop", "43010402"),
+        ("Request::ControlSessionReopen", "43010403"),
+        ("Request::ControlSessionArchiveStopped", "43010404"),
+        ("Request::PreviewWorkspaceRemoval", "4401700177"),
+        (
+            "Request::RemoveApprovedWorkspace",
+            "450170022f72022f770177042f772f610162010167000168010104",
+        ),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
+        ),
+        (
+            "Response::WorkspaceRemoval",
+            "200170022f72022f770177042f772f610162010167000168010104",
         ),
         ("Response::Ok", "00"),
         ("Response::Hierarchy", "01000000"),
@@ -4413,18 +4610,18 @@ mod wire_snapshot {
             "Response::Events",
             "0c0101000101370d7469746c65206170706c696564",
         ),
-        ("Response::NotificationNavigation", "0d04580000"),
+        ("Response::NotificationNavigation", "0d045c0000"),
         (
             "Response::NotificationNavigationConfirmed",
-            "0e01016e0458017301630168016c0104",
+            "0e01016e045c017301630168016c0104",
         ),
         (
             "Response::ITermFocusPrepared",
-            "0f0107080901016901010458017301630168016c0164",
+            "0f010708090101690101045c017301630168016c0164",
         ),
         (
             "Response::BridgeOwner",
-            "1004580107080901016901010458017301630168016c0164",
+            "10045c010708090101690101045c017301630168016c0164",
         ),
         (
             "Response::Transcript",
@@ -4464,7 +4661,7 @@ mod wire_snapshot {
         ("ServerEvent::BridgeContext", "07017301630168016c"),
         (
             "ServerEvent::NotificationNavigation",
-            "08016e0458017301630168016c0104",
+            "08016e045c017301630168016c0104",
         ),
         ("ServerEvent::ITermFocus", "0903"),
         (
@@ -4932,7 +5129,11 @@ mod wire_snapshot {
         ("Request::Operator::Read", "390201010a"),
         (
             "Request::Operator::Submit",
-            "390301000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
+            "39030001000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106",
+        ),
+        (
+            "Request::Operator::SubmitSkill",
+            "3903010c6f767263722d7374617475730101000001017001056c6162656c0106737461626c6501022f7701050106",
         ),
         ("Request::Operator::Stop", "390401020304"),
         ("Request::Operator::Models", "3905"),
@@ -5028,6 +5229,10 @@ mod wire_snapshot {
             "Request::OperatorWorker::Stop",
             "3b0307070707070707070707070707070707070707070707070707070707070707070401020304",
         ),
+        (
+            "Request::OperatorWorker::SetWatches",
+            "3b0307070707070707070707070707070707070707070707070707070707070707070601030401010204",
+        ),
         ("Response::Operator::CurrentNone", "190000"),
         (
             "Response::Operator::CurrentSome",
@@ -5039,7 +5244,7 @@ mod wire_snapshot {
         ),
         (
             "Response::Operator::History",
-            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f010102030400000001010102010102000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
+            "190204000001030101066f70656e6169056d6f64656c0568656c6c6f01010203040000000101010201010200000568656c6c6f01017001056c6162656c0106737461626c6501022f77010501060101",
         ),
         ("Response::Operator::Submitted", "1903010203040000"),
         ("Response::Operator::Stopped", "1904010203040200"),
@@ -5070,7 +5275,7 @@ mod wire_snapshot {
         ("Response::OperatorExchange", "1a010203040100"),
         (
             "Response::OperatorWorker::Start",
-            "1b0001020304010c6f70656e61692f6d6f64656c000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
+            "1b0001020304010c6f70656e61692f6d6f64656c00000568656c6c6f01017001056c6162656c0106737461626c6501022f7701050106000102000107656e7472792d31",
         ),
         (
             "Response::OperatorWorker::StartCompact",
@@ -5082,15 +5287,16 @@ mod wire_snapshot {
         ),
         (
             "Response::OperatorWorker::StartTurn",
-            "1b0101010203040000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
+            "1b010101020304000000047761726d01017001056c6162656c0106737461626c6501022f77010501060001020000",
         ),
         ("Response::OperatorWorker::StartTurnNone", "1b0100"),
         (
             "Response::OperatorWorker::BeginAsyncTurn",
-            "1b04010102030400000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
+            "1b0401010203040000000c7761746368207265706f727401017001056c6162656c0106737461626c6501022f77010501060101020000",
         ),
         ("Response::OperatorWorker::Aborted", "1b0201020304"),
         ("Response::OperatorWorker::Retired", "1b0301020304"),
+        ("Response::OperatorWorker::WatchesSet", "1b0501030401"),
         ("ServerEvent::OperatorChanged", "0c01"),
         ("SessionScope::Workspace", "00"),
         ("SessionScope::OperatorConversation", "0101"),

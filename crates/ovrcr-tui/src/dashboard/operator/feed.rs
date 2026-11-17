@@ -269,6 +269,7 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<(String, usize)> {
 enum Opener<'a> {
     Request {
         text: &'a str,
+        skill: Option<&'a ovrcr_protocol::OperatorSkillSelection>,
         context: &'a OperatorContext,
         /// The captured target differs from the previous request's.
         retargeted: bool,
@@ -330,11 +331,16 @@ fn entries(chat: &Chat) -> Vec<Entry<'_>> {
                 | OperatorWorkerEvent::CompactionStarted
                 | OperatorWorkerEvent::CompactionEnded,
             ) => continue,
-            OperatorMessageContent::User { text, context } => {
+            OperatorMessageContent::User {
+                text,
+                context,
+                skill,
+            } => {
                 let retargeted = previous_context != Some(context);
                 previous_context = Some(context);
                 Some(Opener::Request {
                     text,
+                    skill: skill.as_ref(),
                     context,
                     retargeted,
                 })
@@ -531,7 +537,14 @@ impl Entry<'_> {
 
     fn title(&self) -> String {
         match &self.opener {
-            Opener::Request { text, .. } => display_text(text),
+            Opener::Request { text, skill, .. } => display_text(&skill.map_or_else(
+                || (*text).to_owned(),
+                |skill| {
+                    format!("/skill:{} {text}", skill.name)
+                        .trim_end()
+                        .to_owned()
+                },
+            )),
             Opener::Compaction {
                 instructions: Some(instructions),
             } => format!("Compact context · {}", display_text(instructions)),

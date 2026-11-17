@@ -13,6 +13,22 @@ fn current(fixture: &RecoveryFixture, child: SessionId) -> SessionSummary {
         .unwrap()
 }
 
+fn assert_cli_control(fixture: &RecoveryFixture, child: SessionId, control: &AssignmentControl) {
+    let rows = cli_json(&fixture.live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == child.0)
+        .unwrap();
+    assert_eq!(
+        row["assignment_control"]["control"],
+        serde_json::to_value(control).unwrap(),
+        "cleanup inventory preserves existing assignment ownership, not mutation authority"
+    );
+    assert!(row["assignment_control"]["handle"].is_string());
+}
+
 fn view(stream: &mut UnixStream, child: SessionId, run: SessionRunId, revision: u64) {
     assert_eq!(
         dashboard_view(
@@ -165,6 +181,51 @@ fn read_marker(fixture: &RecoveryFixture, child: SessionId, marker: &str) {
 }
 
 #[test]
+fn cleanup_archive_refuses_stopped_assigned_records_and_preserves_evidence() {
+    let fixture = OwnedFollowup::new();
+    let started: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
+    let original = settled(&fixture, &complete(&fixture, &started));
+    let child = original.identity.session.unwrap();
+    let run = original.identity.run.unwrap();
+    let evidence = fs::read(&original.result_path).unwrap();
+    if let Some(expected) = current(&fixture, child).unread {
+        assert_eq!(
+            fixture.live.request(Request::MarkReviewed {
+                session: child,
+                expected
+            }),
+            Response::Ok
+        );
+    }
+    assert_eq!(
+        fixture.live.request(Request::ControlSession {
+            session: child,
+            expected_run: run,
+            action: SessionControlAction::Stop
+        }),
+        Response::Ok
+    );
+    let stopped = current(&fixture, child);
+    assert!(!stopped.phase.is_live());
+    assert!(!stopped.recovery.unwrap().requires_ack);
+    assert!(stopped.unread.is_none());
+    assert!(matches!(
+        fixture.live.request(Request::ControlSession {
+            session: child,
+            expected_run: run,
+            action: SessionControlAction::ArchiveStopped
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert!(!current(&fixture, child).archived);
+    assert_eq!(current(&fixture, child).run, run);
+    assert_eq!(fs::read(&original.result_path).unwrap(), evidence);
+}
+
+#[test]
 fn public_assignment_human_takeover_return_fences_generics_and_preserves_history() {
     let fixture = OwnedFollowup::new();
     let first: AssignmentSnapshot = serde_json::from_value(fixture.start()).unwrap();
@@ -176,6 +237,7 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
     let run = original.identity.run.unwrap();
     let original_bytes = fs::read(&original.result_path).unwrap();
     let before = fixture.byte_count(&original);
+    assert_cli_control(&fixture, child, &original.control);
     let mut stream = dashboard(&fixture, &original);
     // Inspection/focus and geometry do not transfer authority or stop the child.
     view(&mut stream, child, run, 2);
@@ -206,6 +268,7 @@ fn public_assignment_human_takeover_return_fences_generics_and_preserves_history
     let human = transition(&fixture, &mut stream, child, "take-one", true, 3);
     assert_eq!(human.control.owner, ControlOwner::Human);
     assert_eq!(human.control.epoch, 2);
+    assert_cli_control(&fixture, child, &human.control);
     for request in [
         Request::SendTerminal {
             session: child,
@@ -769,6 +832,7 @@ fn unexpected_human_conversation_change_suspends_only_that_assignment() {
     };
     assert!(uncertain.evidence.is_none());
     assert!(uncertain.control.attribution_invalidated);
+    assert_cli_control(&fixture, child, &uncertain.control);
     assert!(matches!(
         dashboard_view(
             &mut stream,

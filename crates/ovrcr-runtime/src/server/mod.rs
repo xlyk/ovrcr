@@ -154,9 +154,13 @@ fn agent_resume_command(
             }
             Err(error) => Err(error),
         },
-        None => Ok((
+        None if fallback => Ok((
             crate::recovery::terminal_command(&crate::recovery::picker_argv(name)?)?,
             false,
+        )),
+        None => Err(lifecycle_error(
+            ErrorCode::InvalidRequest,
+            "certified conversation reference is unavailable; no process started",
         )),
     }
 }
@@ -830,6 +834,70 @@ impl ServerState {
         self.archive_session_locked(id, expected_run)
     }
 
+    /// Cleanup approval is not permission to stop a process or acknowledge ownership.
+    fn archive_stopped_session(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        // Match shutdown's admission -> mutation order; scheduler admission cannot
+        // cross the ownership read/commit. Completion never waits on these locks.
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        self.reject_archive_lifecycle(id)?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.scope != ovrcr_protocol::SessionScope::Workspace
+            || summary.run != run
+            || summary.archived
+            || summary.phase.is_live()
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "approved stopped session changed; refresh the proposal",
+            ));
+        }
+        if summary
+            .recovery
+            .as_ref()
+            .is_none_or(|recovery| recovery.requires_ack)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::OwnershipUncertain,
+                "stopped ownership is unresolved; cleanup cannot acknowledge it",
+            ));
+        }
+        if summary.unread.is_some()
+            || matches!(
+                summary.activity,
+                ovrcr_protocol::AgentActivity::Busy | ovrcr_protocol::AgentActivity::WaitingInput
+            )
+            || summary
+                .agent
+                .as_ref()
+                .is_some_and(|agent| !agent.input_requests.is_empty())
+            || self.retained.lock().assigned_record(id)?.is_some()
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session has protected results or assigned work",
+            ));
+        }
+        let metadata = self.retained.lock().get(id).unwrap().metadata.clone();
+        if let Some(tasks) = &self.tasks
+            && tasks.protects_stopped_session(
+                &metadata.project,
+                &metadata.workspace,
+                &metadata.cwd,
+            )?
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "active or retained task ownership protects the session Workspace",
+            ));
+        }
+        self.reject_watched_archive(id, run)?;
+        self.archive_session_locked(id, run)
+    }
+
     fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
         self.reject_archive_lifecycle(id)?;
         self.retained.lock().set_archived(id, run, true)?;
@@ -1013,10 +1081,25 @@ impl ServerState {
     }
 
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
+        self.set_session_paused_if_run(id, paused, None)
+    }
+
+    fn set_session_paused_if_run(
+        &self,
+        id: SessionId,
+        paused: bool,
+        expected_run: Option<SessionRunId>,
+    ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         self.reject_archive_lifecycle(id)?;
         let session = self.session_for_terminal_control(id)?;
+        if expected_run.is_some_and(|run| session.run() != run) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
+            ));
+        }
         let control = session.set_paused(paused).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, control, refresh)
@@ -1620,6 +1703,50 @@ impl ServerState {
         Ok(())
     }
 
+    /// Exact caller-bound actions share the ordinary lifecycle owners and guards.
+    pub fn control_session(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        action: ovrcr_protocol::SessionControlAction,
+        grace: Duration,
+    ) -> Result<Option<SessionSummary>> {
+        use ovrcr_protocol::SessionControlAction;
+        match action {
+            SessionControlAction::ArchiveStopped => {
+                self.archive_stopped_session(id, expected_run)?;
+                Ok(None)
+            }
+            SessionControlAction::Pause | SessionControlAction::Resume => {
+                self.set_session_paused_if_run(
+                    id,
+                    action == SessionControlAction::Pause,
+                    Some(expected_run),
+                )?;
+                Ok(None)
+            }
+            SessionControlAction::Stop => {
+                self.kill_session_if_run(id, Some(expected_run), grace)?;
+                Ok(None)
+            }
+            SessionControlAction::Reopen => {
+                let _mutation = self.mutation_lock.lock().unwrap();
+                let summary = self
+                    .session_summary(id)
+                    .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+                // Legacy reopen reconciles N+1; an explicit request for N must not.
+                if summary.run != expected_run {
+                    return Err(lifecycle_error(
+                        ErrorCode::Conflict,
+                        "session run changed; refresh inventory",
+                    ));
+                }
+                self.reopen_session_locked(id, expected_run, false, false)
+                    .map(Some)
+            }
+        }
+    }
+
     pub fn reopen_session(
         &self,
         id: SessionId,
@@ -1900,7 +2027,16 @@ impl ServerState {
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let target = self.control_target(id, None)?;
+        self.kill_session_if_run(id, None, grace)
+    }
+
+    fn kill_session_if_run(
+        &self,
+        id: SessionId,
+        expected_run: Option<SessionRunId>,
+        grace: Duration,
+    ) -> Result<()> {
+        let target = self.control_target(id, expected_run)?;
         let termination = match &target.session {
             Some(session) => session.terminate(grace),
             None => Err(anyhow::Error::new(AlreadyExited)),
@@ -2783,7 +2919,7 @@ impl ServerState {
     pub fn remove_workspace(&self, project: &str, name: &str, force: bool) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.remove_workspace_locked(project, name, None, force)
+        self.remove_workspace_locked(project, name, None, force, false)
     }
 
     pub(crate) fn remove_task_workspace(
@@ -2825,16 +2961,19 @@ impl ServerState {
             .unwrap()
             .workspace(project, name)
             .context("retained worktree is not registered; inspect it before cleanup")?;
-        self.remove_workspace_locked(project, name, Some((&run, run_dir)), false)
+        self.remove_workspace_locked(project, name, Some((&run, run_dir)), false, false)
     }
 
-    fn remove_workspace_locked(
+    fn validate_workspace_removal(
         &self,
         project: &str,
         name: &str,
-        cleanup: Option<(&crate::tasks::Run, &Path)>,
-        mut force: bool,
-    ) -> Result<()> {
+        force: bool,
+    ) -> Result<(
+        crate::config::ProjectRecord,
+        crate::config::WorkspaceRecord,
+        Vec<SessionSummary>,
+    )> {
         let (project_record, workspace, repository_roots) = {
             let registry = self.registry.lock().unwrap();
             (
@@ -2991,13 +3130,133 @@ impl ServerState {
                 ),
             ));
         }
+        Ok((project_record, workspace, uncertain))
+    }
+
+    pub fn preview_workspace_removal(
+        &self,
+        project: &str,
+        workspace: &str,
+    ) -> Result<ovrcr_protocol::WorkspaceRemovalObservation> {
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.workspace_removal_observation(project, workspace)
+    }
+
+    pub fn remove_approved_workspace(
+        &self,
+        expected: &ovrcr_protocol::WorkspaceRemovalObservation,
+    ) -> Result<()> {
+        let _admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let current =
+            self.workspace_removal_observation(&expected.project, &expected.workspace.id)?;
+        if current != *expected {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "approved Workspace state changed; reconcile the original proposal",
+            ));
+        }
+        self.remove_workspace_locked(&expected.project, &expected.workspace.id, None, false, true)
+    }
+
+    // Caller holds task admission -> mutation through observation and removal commit.
+    fn workspace_removal_observation(
+        &self,
+        project: &str,
+        name: &str,
+    ) -> Result<ovrcr_protocol::WorkspaceRemovalObservation> {
+        self.reject_if_stopping()?;
+        let (project_record, mut workspace, _) =
+            self.validate_workspace_removal(project, name, false)?;
+        if let Some(tasks) = &self.tasks
+            && tasks.protects_stopped_session(project, &workspace.id, &workspace.path)?
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "active or retained task ownership protects the Workspace",
+            ));
+        }
+        let mut archived_sessions = Vec::new();
+        for summary in self.session_summaries().into_iter().filter(|row| {
+            (row.project == project && row.workspace == workspace.id)
+                || same_path(&row.cwd, &workspace.path)
+        }) {
+            if !summary.archived {
+                return Err(lifecycle_error(
+                    ErrorCode::SessionsRemain,
+                    "Workspace has active-list records; separate archive approval is required",
+                ));
+            }
+            if summary.phase.is_live()
+                || summary
+                    .recovery
+                    .as_ref()
+                    .is_none_or(|recovery| recovery.requires_ack)
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::OwnershipUncertain,
+                    "archived Workspace ownership is unresolved",
+                ));
+            }
+            if summary.unread.is_some()
+                || matches!(
+                    summary.activity,
+                    ovrcr_protocol::AgentActivity::Busy
+                        | ovrcr_protocol::AgentActivity::WaitingInput
+                )
+                || summary
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| !agent.input_requests.is_empty())
+                || self.retained.lock().assigned_record(summary.id)?.is_some()
+            {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "Workspace has protected session results or assignments",
+                ));
+            }
+            self.reject_watched_session(summary.id, None)?;
+            archived_sessions.push((summary.id, summary.run));
+        }
+        archived_sessions.sort_by_key(|(id, _)| id.0);
+        let inspection = git::inspect_worktree(&project_record, &workspace)
+            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
+        if inspection.dirty {
+            return Err(lifecycle_error(
+                ErrorCode::DirtyWorktree,
+                "cleanup requires a clean worktree; WIP saving is not authorized",
+            ));
+        }
+        workspace.branch = inspection.branch;
+        let head = git::resolve_commit(&inspection.canonical_path, "HEAD")?;
+        Ok(ovrcr_protocol::WorkspaceRemovalObservation {
+            project: project.to_owned(),
+            repo: project_record.repo,
+            workspace_root: project_record.workspace_root,
+            workspace,
+            head,
+            archived_sessions,
+        })
+    }
+
+    fn remove_workspace_locked(
+        &self,
+        project: &str,
+        name: &str,
+        cleanup: Option<(&crate::tasks::Run, &Path)>,
+        mut force: bool,
+        approved: bool,
+    ) -> Result<()> {
+        let (project_record, workspace, uncertain) =
+            self.validate_workspace_removal(project, name, force)?;
         // A directory deleted outside OVRCR has nothing left to protect;
         // removal then prunes Git's stale registration (see git.rs).
         let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
         if directory_present {
             let inspection = git::inspect_worktree(&project_record, &workspace)
                 .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
-            if inspection.dirty && self.save_uncommitted_work() {
+            if inspection.dirty && !approved && self.save_uncommitted_work() {
                 git::publish_wip(&inspection.canonical_path, &inspection.branch)
                     .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?;
                 force = true;
@@ -3020,7 +3279,7 @@ impl ServerState {
             let mut cleaned = run.clone();
             cleaned.workspace = None;
             crate::tasks::write_run(run_dir, &cleaned)?;
-        } else if let Some(tasks) = &self.tasks {
+        } else if !approved && let Some(tasks) = &self.tasks {
             // Ordinary workspace removal also consumes any historical run's ownership.
             tasks.release_workspace_ownership(project, &workspace)?;
         }

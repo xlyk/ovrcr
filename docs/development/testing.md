@@ -338,7 +338,7 @@ diagnostics-gated paths). Ignored entry points are product evidence only when
 their owning parent or native run explicitly selects and checks them.
 
 The compiled e2e suite also covers same-run leased chat and model/default
-changes, all seven Operator slash commands (`/copy`, `/thinking`, `/model`,
+changes, the existing Operator slash commands (`/copy`, `/thinking`, `/model`,
 `/new`, `/session`, `/compact`, `/tree` including `"Summarize branch?"` custom
 prompts, user-prompt rewind composer restore and `Stop` rollback),
 `CatalogProcessOwner` dedicated-profile model discovery, atomic
@@ -373,6 +373,184 @@ fourth turn (an attached Bash command with an ordinary background child) whose
 request and tool output never enter the fifth turn's context, and authenticated
 stop proof. It does not prove subscription entitlement; account sign-in stays a
 separate user-operated `ovrcr operator setup` step.
+
+Bundled status and isolated delivery (installed Pi, real native tools and CLI):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_status -- --ignored --nocapture
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_bundled_skill -- --ignored --nocapture
+```
+
+The status overview uses both Dashboard entry points, two registered Projects
+and real PTYs with Ready, Input-request and unavailable Reporter observations.
+It observes actual skill/reference reads, matching-instance CLI inventory,
+instance-wide and narrower reports, unchanged resources and attention state,
+and cold/resumed/warm/compacted delivery. An explicitly requested coordinator
+watch keeps the worker warm; removing it leaves the Agent running. Invalid
+required documents, reference paths and writable directories must fail before
+any provider request. Personal, Project and unregistered skill sentinels stay
+undiscovered. These controlled-provider tests prove composition and resource
+effects, not an unconstrained model's choice of procedure or native keyboard use.
+
+Explicit named invocation (installed Pi, actual provider request bodies):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_explicit_skill -- --ignored --nocapture
+```
+
+The three cases cover full/Quick input and visible refusals, context/instruction/
+request order, status/coordinator selections, bare invocation, cold checkpoint resume,
+reconnect, warm leased turns and compaction, exact revision refusal without model
+work, invalid required assets and recoverable requests, and ordinary slash-like
+text. They reuse the status inventory/watch fixture and local provider. Native
+keyboard/visible-outcome evidence remains separate from this Dashboard driver.
+
+Workspace provisioning (installed Pi, relocated matching CLI, real Git and PTYs):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_workspaces -- --ignored --nocapture
+```
+
+The production Dashboard driver loads the complete bundled procedure and drives
+inspection without registration, explicit-base creation, Workspace/Terminal reuse,
+and all three automatic-local-terminal policies. A managed installed Pi session
+must return a real provider response through its PTY with an Unread observation;
+process creation and successful input alone do not pass. Separate real-checkout
+cases exercise ambiguous branches, detached targeting, off-default Root launch
+refusal, and an unanswered permission screen in a shell carrying a Pi label.
+The controlled provider executes `tests/fixtures/operator-pi/workspaces.py` through
+Pi's admitted Bash tool. Assertions check actual CLI/Git/session results; these
+cases do not prove an unconstrained model's judgment or native keyboard use.
+The explicit-selection case also drives full/Quick `/skill:ovrcr-workspaces`
+inspection, checking instruction order and unchanged inventory.
+
+Searchable skill catalog and staged Send (installed Pi):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_skills_picker -- --ignored --nocapture
+```
+
+This case drives full and cold Quick-to-full browsing through Dashboard input,
+checks shipped identities and purpose search, cancellation and preparation with
+zero provider requests, then inspects the exact selected instructions and captured
+session/Workspace in the real model request. Unknown/stale selection refusals
+start no extra model work. The real Workspace Agent's input file and inventory
+stay unchanged. Public TUI `skills_picker_*` regressions additionally cover
+partial slash-menu completion, mouse selection/dismissal, narrow/tiny layouts,
+busy/stop-unconfirmed drafts and a changed underlying Quick target. Catalog unit
+tests verify the shared validated purpose; existing Pi materialization tests cover
+the delivery caller. Native keyboard/mouse proof uses the helper below separately.
+
+Read-only session diagnosis (installed Pi, actual inventory/transcript/screen reads):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_session_care_diagnosis -- --ignored --nocapture
+```
+
+The owning status Reporter fixture also supplies Busy, idle, WaitingInput, Ready,
+unavailable reporting, natural exit and same-boot interrupted sessions. Diagnosis
+uses numeric session/run identity despite identical misleading titles. Codex
+transcripts include a clipped entry and missing history; Pi uses terminal reads
+and Oh My Pi uses screen windows. The production Dashboard submits through full
+and Quick entry points to installed Pi, whose real tools invoke the matching CLI.
+External inventory, input files and history bytes prove inspection preserves
+processes, Unread, Input requests and recovery acknowledgements. Controlled
+provider replies derive from those observations; they do not establish an
+unconstrained model's inference quality or native keyboard behavior.
+
+Cleanup preview and approved stopped-record archive (installed Pi, relocated matching binary):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_cleanup_preview -- --ignored --nocapture
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_cleanup_archive_stopped -- --ignored --nocapture
+```
+
+The owning Dashboard/provider fixture uses full and Quick requests, real Git
+checkouts, Reporter PTYs, an existing completion watch and a held native Pi task
+in its Git Workspace. Historical retained timestamps are seeded only while the
+Server is stopped; request observation time pins the default 24-hour boundary at
+±1 ms, with null time and 0/48-hour overrides. Assertions cover scope, exact runs,
+protected states, stopped archive versus live review, dirty/Root/occupied/task
+blockers, archived uncertainty and ignored provider history. Inventory, task
+runs, input files, Git refs/status/HEAD and history bytes remain unchanged during
+preview. The archive case then partially approves exact listed records through
+Quick message: one archives, one reopened run refuses, and unapproved records,
+provider history, branches and checkouts remain. It verifies real native watch
+handshakes and an unrelated active watch alongside actual archived inventory. The controlled provider follows the shipped procedure
+with real native reads and emits reports from tool results, not unconstrained
+model judgment. Assignment-control CLI observations are also checked in the
+owning `pi_delegation` Controller/Human/Uncertain lifecycle regressions. Native
+keyboard and visible-outcome proof remains a separate gate. `retained_ownership`
+checks the CLI stopped-only fence, stale approval and uncertain ownership;
+`server::operator_tests::stopped_archive_and_watch_admission_share_exact_run_protection`
+checks both admission orderings, unrelated targets, projection uncertainty,
+exact-update replay, stale updates, persistence refusal and retired authority.
+The extension probe checks lost-ack mutation fencing and preserved warm watch state.
+
+Separately approved Workspace removal (installed Pi, relocated binary, real Git):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_cleanup_remove_workspace_partial_approval -- --ignored --nocapture
+cargo test -p ovrcr --test retained_sessions approved_workspace_removal
+cargo test -p ovrcr-runtime --lib workspace_removal
+```
+
+The owning cleanup fixture proposes three exact paths through full Operator,
+changes no resources, then approves only two through Quick: one checkout is
+removed and the newly dirty one refuses even with WIP saving enabled. The third
+stays unapproved. Actual CLI inventory, files, branches and archived original
+context are asserted independently of rendered results. The new relocated-image
+case admits its exact copied executable once with a bounded `--version` before
+Server startup and records the timing. This proves admitted-image relocation and
+application behavior, not cold-copy OS startup. Existing startup deadlines remain.
+
+Public retained-session regressions cover separate archive approval, changed
+branch/HEAD, new occupancy, registered id/path reuse and unregistered Git
+replacement, ignored provider history, uncertain archived ownership, Root, Git
+refusal, deferred registry-commit failure and strict refusal to replay a missing
+checkout. Runtime tests cover task admission ordering and pending watches of
+archived previous runs through the production removal owner with real Git.
+Protocol tests pin new request/response encodings and required observation fields.
+Native full/Quick keyboard and visible results remain a separate gate.
+
+Exact-run session control and native recovery (installed Pi):
+
+```sh
+OVRCR_TEST_PI_EXECUTABLE=/absolute/pi \
+  cargo test -p ovrcr --features acceptance-diagnostics --test operator_e2e \
+  installed_pi_operator_session_care_control_and_native_resume -- --ignored --nocapture
+cargo test -p ovrcr --test retained_ownership
+```
+
+Full and Quick requests execute real pause/resume, controlled stop, Terminal
+reopen and close through the inherited CLI. A managed native Pi creates its own
+history and certified reference, then Operator stops and resumes it; matching
+attachment, restored native history and no replayed model request are asserted.
+Missing history refuses recovery without a picker or lost record. The retained
+ownership suite forces replacement-run admission, proves the replacement PID and
+Reporter capability survive, and checks unresolved ownership refusals. The GUI
+provider accepts `Control exact session ID RUN ACTION` (pause, resume, stop,
+reopen, close) for the same controlled-provider walkthrough; only use IDs/runs
+from its task-owned instance. Native keyboard/visible results remain a separate
+gate, not established by these headless tests.
 
 GUI provider helper for the native walkthrough in
 [computer-use testing](../testing-computer-use.md):

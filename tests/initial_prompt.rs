@@ -46,10 +46,12 @@ fn install_fake_claude(live: &Live) -> (PathBuf, PathBuf) {
     let bin = live.root.path().join("fake-native-bin");
     std::fs::create_dir(&bin).unwrap();
     let executable = bin.join("claude");
+    // Both prompted and blank launches are interactive; stay live until the
+    // Server stops this owned session instead of racing teardown with exit(0).
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\ncase \"$1\" in auth|--version|--output-format) exit 0 ;; esac\nprintf '%s\\n' '{FAKE_LAUNCH_MARKER}' >> \"${CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${CAPTURE_ENV}\"; done\nif [ \"$OVRCR_TEST_FAKE_CLAUDE_INTERACTIVE\" = \"1\" ]; then IFS= read -r input || exit 0; printf 'INPUT:%s\\n' \"$input\" >> \"${CAPTURE_ENV}\"; fi\nexit 0\n"
+            "#!/bin/sh\ncase \"$1\" in auth|--version|--output-format) exit 0 ;; esac\nprintf '%s\\n' '{FAKE_LAUNCH_MARKER}' >> \"${CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${CAPTURE_ENV}\"; done\nwhile IFS= read -r input; do if [ \"$OVRCR_TEST_FAKE_CLAUDE_INTERACTIVE\" = \"1\" ]; then printf 'INPUT:%s\\n' \"$input\" >> \"${CAPTURE_ENV}\"; fi; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -67,7 +69,7 @@ fn install_fake_pi(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\n\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"--list-models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_PI_CATALOG__' >> \"${PI_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${PI_CAPTURE_ENV}\"; done\n    cat \"${PI_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_PI_LAUNCH_MARKER}' >> \"${PI_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${PI_CAPTURE_ENV}\"; done\nexit 0\n"
+            "#!/bin/sh\n\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"--list-models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_PI_CATALOG__' >> \"${PI_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${PI_CAPTURE_ENV}\"; done\n    cat \"${PI_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_PI_LAUNCH_MARKER}' >> \"${PI_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${PI_CAPTURE_ENV}\"; done\nwhile IFS= read -r input; do printf 'INPUT:%s\\n' \"$input\" >> \"${PI_CAPTURE_ENV}\"; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -217,7 +219,7 @@ fn install_fake_omp(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_OMP_CATALOG__' >> \"${OMP_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${OMP_CAPTURE_ENV}\"; done\n    cat \"${OMP_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_OMP_LAUNCH_MARKER}' >> \"${OMP_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${OMP_CAPTURE_ENV}\"; done\nexit 0\n"
+            "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_OMP_CATALOG__' >> \"${OMP_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${OMP_CAPTURE_ENV}\"; done\n    cat \"${OMP_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_OMP_LAUNCH_MARKER}' >> \"${OMP_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${OMP_CAPTURE_ENV}\"; done\nwhile IFS= read -r input; do printf 'INPUT:%s\\n' \"$input\" >> \"${OMP_CAPTURE_ENV}\"; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -272,7 +274,7 @@ fn install_fake_agy(live: &Live) -> (PathBuf, PathBuf, PathBuf) {
     std::fs::write(
         &executable,
         format!(
-            "#!/bin/sh\nif [ \"$1\" = \"-p\" ] && [ \"$2\" = \"/usage\" ]; then\n  printf '%s\\n' '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.8,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}'\n  exit 0\nfi\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_AGY_CATALOG__' >> \"${AGY_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${AGY_CAPTURE_ENV}\"; done\n    printf 'Fetching available models...\\n' >&2\n    cat \"${AGY_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_AGY_LAUNCH_MARKER}' >> \"${AGY_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${AGY_CAPTURE_ENV}\"; done\nexit 0\n"
+            "#!/bin/sh\nif [ \"$1\" = \"-p\" ] && [ \"$2\" = \"/usage\" ]; then\n  printf '%s\\n' '{{\"status\":\"SUCCESS\",\"command\":{{\"name\":\"usage\",\"data\":{{\"groups\":[{{\"name\":\"Gemini\",\"buckets\":[{{\"id\":\"gemini-5h\",\"remaining_fraction\":0.8,\"reset_time\":\"2099-01-01T00:00:00Z\",\"window\":\"5h\"}}]}}]}}}}}}'\n  exit 0\nfi\nfor argument in \"$@\"; do\n  if [ \"$argument\" = \"models\" ]; then\n    printf '%s\\n' '__OVRCR_FAKE_AGY_CATALOG__' >> \"${AGY_CAPTURE_ENV}\"\n    for catalog_argument in \"$@\"; do printf 'CATALOG_ARG:%s\\n' \"$catalog_argument\" >> \"${AGY_CAPTURE_ENV}\"; done\n    printf 'Fetching available models...\\n' >&2\n    cat \"${AGY_CATALOG_ENV}\"\n    exit 0\n  fi\ndone\nprintf '%s\\n' '{FAKE_AGY_LAUNCH_MARKER}' >> \"${AGY_CAPTURE_ENV}\"\nfor argument in \"$@\"; do printf 'ARG:%s\\n' \"$argument\" >> \"${AGY_CAPTURE_ENV}\"; done\nwhile IFS= read -r input; do printf 'INPUT:%s\\n' \"$input\" >> \"${AGY_CAPTURE_ENV}\"; done\nexit 0\n"
         ),
     )
     .unwrap();
@@ -962,6 +964,7 @@ fn agy_model_catalog_and_initial_prompt_use_detected_interactive_grammar() {
         "the accepted intent identifies exactly one retained session"
     );
     assert_public_stores_exclude(&live, "literal prompt text");
+    assert_interactive_inputs(&live, &capture, session);
 
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
@@ -1098,6 +1101,21 @@ fn wait_for_intent(
             snapshot.state
         );
         thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+fn assert_interactive_inputs(live: &Live, capture: &Path, session: ovrcr::protocol::SessionId) {
+    for index in 1..=2 {
+        let input = format!("INTERACTIVE_INPUT_{}_{index}", session.0);
+        assert_eq!(
+            live.request(Request::SendTerminal {
+                session,
+                text: input.clone(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        wait_for_capture(capture, &format!("INPUT:{input}"));
     }
 }
 
@@ -1577,21 +1595,26 @@ fn blank_prompt_uses_the_same_deduplicated_interactive_intent() {
     };
     assert_eq!(duplicate, vec![accepted]);
 
-    let input = "T392_INTERACTIVE_INPUT_5ddf28a2";
-    assert_eq!(
-        live.request(Request::SendTerminal {
-            session,
-            text: input.into(),
-            submit: true,
-        }),
-        Response::Ok
-    );
-    let output = wait_for_capture(&capture, &format!("INPUT:{input}"));
-    assert_eq!(
-        fake_launch_count(&output),
-        1,
-        "duplicate Start did not spawn twice"
-    );
+    // A blank launch stays interactive after its first input, until explicit stop.
+    for input in [
+        "T392_INTERACTIVE_INPUT_5ddf28a2",
+        "T392_SECOND_INTERACTIVE_INPUT_64da127b",
+    ] {
+        assert_eq!(
+            live.request(Request::SendTerminal {
+                session,
+                text: input.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        let output = wait_for_capture(&capture, &format!("INPUT:{input}"));
+        assert_eq!(
+            fake_launch_count(&output),
+            1,
+            "duplicate Start did not spawn twice"
+        );
+    }
     let Response::Inventory { sessions, .. } = live.request(Request::Inspect) else {
         panic!("expected retained session inventory")
     };
@@ -1782,6 +1805,8 @@ fn pi_model_catalog_and_initial_prompt_use_the_detected_native_launcher() {
         !blank_launch_output.contains("ARG:--model\n") && !blank_launch_output.contains("ARG:--\n"),
         "blank prompt leaves Pi interactive with Harness default"
     );
+    assert_interactive_inputs(&live, &capture, accepted.session.unwrap());
+    assert_interactive_inputs(&live, &capture, blank_accepted.session.unwrap());
 
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
@@ -2254,6 +2279,8 @@ fn omp_model_catalog_and_initial_prompt_keep_one_detected_native_launch() {
     assert!(!blank_output.contains("ARG:--\n"));
 
     let event_ring_empty = assert_public_stores_exclude(&live, "T395_OMP_PROMPT_MARKER_73ab9df1");
+    assert_interactive_inputs(&live, &capture, accepted.session.unwrap());
+    assert_interactive_inputs(&live, &capture, blank_accepted.session.unwrap());
     drop(dashboard);
     assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
     live.join();

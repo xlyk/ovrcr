@@ -224,6 +224,7 @@ impl OperatorClient {
     pub fn submit(&mut self, summary: &OperatorConversationSummary, text: &str) -> Response {
         // The captured context is a real feature-workspace selection.
         self.exchange(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: summary.id,
             expected_run: summary.run,
             text: text.into(),

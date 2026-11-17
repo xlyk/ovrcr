@@ -284,6 +284,7 @@ exec '{}' --exact server::operator_tests::operator_worker_fixture --ignored --no
     fn submit(&mut self, c: &OperatorConversationSummary) -> OperatorTurn {
         let Response::Operator(OperatorResponse::Submitted(t)) =
             self.request(Request::Operator(OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: c.run,
                 text: "fixture prompt".into(),
@@ -669,6 +670,310 @@ fn operator_current_never_creates_and_open_is_idempotent() {
 }
 
 #[test]
+fn stopped_archive_and_watch_admission_share_exact_run_protection() {
+    let mut live = LiveOperator::new();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+    let identity = OperatorRunIdentity {
+        conversation: c.id,
+        session: c.session,
+        run: turn.identity.run,
+    };
+    let create = |name: &str| {
+        live.state
+            .retained
+            .lock()
+            .create(SessionMetadata {
+                scope: SessionScope::Workspace,
+                project: "fixture".into(),
+                workspace: "fixture".into(),
+                name: name.into(),
+                label: name.into(),
+                cwd: live.root.path().into(),
+                kind: SessionKind::Terminal,
+                pinned_title: None,
+                application_title: None,
+            })
+            .unwrap()
+    };
+    let watched = create("watched");
+    let other = create("other");
+    let archive = |row: &crate::retained::RetainedSession| {
+        live.control(Request::ControlSession {
+            session: row.id,
+            expected_run: row.run,
+            action: SessionControlAction::ArchiveStopped,
+        })
+    };
+    let update = |revision, targets| {
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity,
+                update: OperatorWatchUpdate { revision, targets },
+            },
+        }))
+    };
+    assert!(
+        matches!(
+            archive(&watched),
+            Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                ..
+            }
+        ),
+        "missing projection is not empty"
+    );
+    let target = OperatorWatchTarget {
+        session: watched.id,
+        run: watched.run,
+    };
+    let accepted = update(1, vec![target.clone()]); // registration wins before archive admission
+    assert!(matches!(
+        accepted,
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { revision: 1, .. })
+    ));
+    // Discarding the first reply and reconnecting reconciles only that exact update.
+    assert_eq!(update(1, vec![target.clone()]), accepted);
+    assert!(matches!(update(1, vec![]), Response::Error { .. }));
+    assert!(matches!(
+        archive(&watched),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        archive(&other),
+        Response::Ok,
+        "unrelated watches do not block selected approval"
+    );
+    // Archive won first: a subsequent registration cannot protect a replacement run.
+    assert!(matches!(
+        update(
+            2,
+            vec![
+                target.clone(),
+                OperatorWatchTarget {
+                    session: other.id,
+                    run: other.run
+                }
+            ]
+        ),
+        Response::Error { .. }
+    ));
+    assert!(matches!(
+        update(2, vec![]),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { revision: 2, .. })
+    ));
+    assert!(
+        matches!(update(1, vec![target]), Response::Error { .. }),
+        "late snapshots cannot overwrite an acknowledged removal"
+    );
+    // Inject a persistence refusal at the real archive commit, preserving original identity/evidence.
+    live.state.retained.lock().connection.execute_batch("CREATE TRIGGER refuse_archive BEFORE UPDATE OF disposition ON retained_sessions BEGIN SELECT RAISE(ABORT, 'fixture archive failure'); END;").unwrap();
+    assert!(matches!(archive(&watched), Response::Error { .. }));
+    let record = live.state.session_summary(watched.id).unwrap();
+    assert!(!record.archived);
+    assert_eq!(record.run, watched.run);
+    live.state
+        .retained
+        .lock()
+        .connection
+        .execute_batch("DROP TRIGGER refuse_archive;")
+        .unwrap();
+    assert_eq!(archive(&watched), Response::Ok);
+    assert!(live.state.session_summary(watched.id).unwrap().archived);
+    assert_eq!(
+        live.control(Request::ControlSession {
+            session: c.session,
+            expected_run: identity.run,
+            action: SessionControlAction::ArchiveStopped
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message: "approved stopped session changed; refresh the proposal".into()
+        }
+    );
+    let lost = create("worker-loss");
+    assert!(matches!(
+        update(
+            3,
+            vec![OperatorWatchTarget {
+                session: lost.id,
+                run: lost.run
+            }]
+        ),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    let worker = live.state.sessions.lock().unwrap()[&c.session].clone();
+    worker.terminate(Duration::from_secs(2)).unwrap(); // fixture-owned process loss, not Server stop proof
+    wait_until(|| !worker.is_live());
+    assert!(
+        matches!(update(4, vec![]), Response::Error { .. }),
+        "lost worker cannot replace protection on a fresh connection"
+    );
+    assert!(
+        matches!(
+            archive(&lost),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "worker loss preserves its last acknowledged protection"
+    );
+    assert!(!live.state.retained.lock().get(c.session).unwrap().stopped);
+    live.state
+        .acknowledge_session_stopped(c.session, identity.run)
+        .unwrap();
+    assert_eq!(
+        archive(&lost),
+        Response::Ok,
+        "explicit exact-owner stop proof retires only that worker's protection"
+    );
+    assert!(
+        matches!(update(4, vec![]), Response::Error { .. }),
+        "retired worker cannot replace protection"
+    );
+}
+
+#[test]
+fn approved_workspace_removal_protects_pending_watches_of_archived_previous_runs() {
+    let mut live = LiveOperator::new();
+    let repo = live.root.path().join("repo");
+    let workspaces = live.root.path().join("workspaces");
+    fs::create_dir(&repo).unwrap();
+    fs::create_dir(&workspaces).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let repo = repo.canonicalize().unwrap();
+    let workspaces = workspaces.canonicalize().unwrap();
+    live.state
+        .registry
+        .lock()
+        .unwrap()
+        .add_project(ProjectRecord {
+            name: "fixture".into(),
+            repo: repo.clone(),
+            workspace_root: workspaces.clone(),
+            workspaces: vec![WorkspaceRecord {
+                id: "root".into(),
+                path: repo.clone(),
+                branch: "main".into(),
+                git_identity: Some(crate::git::capture_worktree_identity(&repo).unwrap()),
+                setup_pending: false,
+            }],
+        })
+        .unwrap();
+    live.state
+        .create_task_workspace(
+            "fixture".into(),
+            "work".into(),
+            "feature".into(),
+            "main".into(),
+        )
+        .unwrap();
+    let row = live
+        .state
+        .retained
+        .lock()
+        .create(SessionMetadata {
+            scope: SessionScope::Workspace,
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: "watched".into(),
+            label: "shell".into(),
+            cwd: workspaces.join("work"),
+            kind: SessionKind::Terminal,
+            pinned_title: None,
+            application_title: None,
+        })
+        .unwrap();
+    let c = live.open();
+    let turn = live.submit(&c);
+    let auth = live.ready(&c);
+    let update = |revision, targets| {
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity: OperatorRunIdentity {
+                    conversation: c.id,
+                    session: c.session,
+                    run: turn.identity.run,
+                },
+                update: OperatorWatchUpdate { revision, targets },
+            },
+        }))
+    };
+    assert!(matches!(
+        update(
+            1,
+            vec![OperatorWatchTarget {
+                session: row.id,
+                run: row.run
+            }]
+        ),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    // Precise direct close remains legal; queued reports still protect the old run.
+    live.state
+        .close_terminal(row.id, row.run, Duration::ZERO)
+        .unwrap();
+    assert!(live.state.session_summary(row.id).unwrap().archived);
+    assert!(
+        live.state
+            .preview_workspace_removal("fixture", "work")
+            .unwrap_err()
+            .to_string()
+            .contains("watch")
+    );
+    assert!(workspaces.join("work").is_dir());
+    assert!(matches!(
+        update(2, vec![]),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
+    let approved = live
+        .state
+        .preview_workspace_removal("fixture", "work")
+        .unwrap();
+    live.state.remove_approved_workspace(&approved).unwrap();
+    assert!(!workspaces.join("work").exists());
+    assert!(live.state.session_summary(row.id).unwrap().archived);
+    assert!(
+        std::process::Command::new("git")
+            .current_dir(&repo)
+            .args(["rev-parse", "--verify", "feature"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn operator_worker_completes_and_retires_with_stop_proof() {
     let mut live = LiveOperator::new();
     let c = live.open();
@@ -748,6 +1053,7 @@ fn user_submit_wins_async_wakeup_admission_without_losing_the_report_or_turn() {
         let result = submit_state.operator_request(
             &submit_owner,
             OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: first.identity.run,
                 text: "human report follow-up".into(),
@@ -829,6 +1135,7 @@ fn operator_stop_is_independent_busy_refusal_and_stale_messages_preserve_history
     let auth = live.ready(&c);
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "keep draft".into(),
@@ -1049,6 +1356,7 @@ fn operator_natural_exit_does_not_certify_stop_or_allow_another_turn() {
     );
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "do not replay".into(),
@@ -1249,7 +1557,43 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     let mut live = LiveOperator::new();
     let c = live.open();
     let turn = live.submit(&c);
-    live.ready(&c);
+    let auth = live.ready(&c);
+    let stopped = live
+        .state
+        .retained
+        .lock()
+        .create(SessionMetadata {
+            scope: SessionScope::Workspace,
+            project: "fixture".into(),
+            workspace: "fixture".into(),
+            name: "watched-before-restart".into(),
+            label: "fixture".into(),
+            cwd: live.root.path().into(),
+            kind: SessionKind::Terminal,
+            pinned_title: None,
+            application_title: None,
+        })
+        .unwrap();
+    assert!(matches!(
+        live.control(Request::OperatorWorker(OperatorWorkerRequest {
+            auth: auth.clone(),
+            command: OperatorWorkerCommand::SetWatches {
+                identity: OperatorRunIdentity {
+                    conversation: c.id,
+                    session: c.session,
+                    run: turn.identity.run
+                },
+                update: OperatorWatchUpdate {
+                    revision: 1,
+                    targets: vec![OperatorWatchTarget {
+                        session: stopped.id,
+                        run: stopped.run
+                    }]
+                },
+            },
+        })),
+        Response::OperatorWorker(OperatorWorkerResult::WatchesSet { .. })
+    ));
     live.stop_server();
     let root = std::mem::replace(&mut live.root, tempfile::tempdir().unwrap());
     let mut restarted = LiveOperator::from_root(root);
@@ -1263,6 +1607,7 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     assert!(!h.conversation.worker_stopped);
     assert!(matches!(
         restarted.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: turn.identity.run,
             text: "do not replay uncertain work".into(),
@@ -1272,6 +1617,47 @@ fn operator_server_restart_retains_partial_history_without_launch_or_replay() {
     ));
     assert_eq!(restarted.history(&c).messages.len(), 3);
     assert!(restarted.state.sessions.lock().unwrap().is_empty());
+    assert!(
+        matches!(
+            restarted.control(Request::ControlSession {
+                session: stopped.id,
+                expected_run: stopped.run,
+                action: SessionControlAction::ArchiveStopped,
+            }),
+            Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                ..
+            }
+        ),
+        "missing watch state after restart is uncertainty, never an empty projection"
+    );
+    assert!(
+        !restarted
+            .state
+            .session_summary(stopped.id)
+            .unwrap()
+            .archived
+    );
+    assert!(
+        matches!(
+            restarted.control(Request::OperatorWorker(OperatorWorkerRequest {
+                auth,
+                command: OperatorWorkerCommand::SetWatches {
+                    identity: OperatorRunIdentity {
+                        conversation: c.id,
+                        session: c.session,
+                        run: turn.identity.run
+                    },
+                    update: OperatorWatchUpdate {
+                        revision: 2,
+                        targets: vec![]
+                    },
+                },
+            })),
+            Response::Error { .. }
+        ),
+        "prior worker authority cannot clear missing protection after restart"
+    );
 }
 
 #[test]
@@ -1285,6 +1671,7 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
     // A completed model response still occupies its slot and cannot start a replacement.
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: first.identity.run,
             text: "fixture prompt".into(),
@@ -1307,6 +1694,7 @@ fn operator_followup_reuses_only_completed_context_after_controlled_retirement()
     }
     let Response::Operator(OperatorResponse::Submitted(second)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: first.identity.run,
             text: "fixture prompt".into(),
@@ -1340,6 +1728,7 @@ fn operator_completed_control_handles_are_pruned_and_remain_bounded() {
     for _ in 0..200 {
         assert!(matches!(
             live.request(Request::Operator(OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: SessionRunId(0),
                 text: "".into(),
@@ -1393,6 +1782,7 @@ fn operator_request_lock_order_never_holds_dashboard_while_waiting_for_retained(
                 limit: 100,
             },
             "submit" => OperatorRequest::Submit {
+                skill: None,
                 conversation: c.id,
                 expected_run: SessionRunId(42),
                 text: "keep draft".into(),
@@ -1640,6 +2030,7 @@ fn operator_legacy_conversation_is_hidden_refuses_work_and_keeps_recovery() {
     // No new submit revives it, and Open starts a separate singleton.
     assert!(matches!(
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: legacy.id,
             expected_run: turn.identity.run,
             text: "revive".into(),
@@ -2255,6 +2646,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
     };
     let Response::Operator(OperatorResponse::Submitted(t1)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: c.run,
             text: "first prompt".into(),
@@ -2361,6 +2753,7 @@ fn tree_and_navigate_tree_inspect_busy_sessions_switch_branches_and_restore_prom
     };
     let Response::Operator(OperatorResponse::Submitted(t2)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: after_t1.run,
             text: "branch A prompt".into(),
@@ -2547,6 +2940,7 @@ fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error()
     // Turn 1 (`u1 -> a1`) and Turn 2 (`u2a -> a2a`).
     let Response::Operator(OperatorResponse::Submitted(t1)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: c.run,
             text: "root prompt".into(),
@@ -2574,6 +2968,7 @@ fn branch_summary_turn_submits_completes_and_preserves_branch_on_stop_or_error()
     };
     let Response::Operator(OperatorResponse::Submitted(t2)) =
         live.request(Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: c.id,
             expected_run: after_t1.run,
             text: "branch A prompt".into(),

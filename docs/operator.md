@@ -125,13 +125,115 @@ Existing OVRCR CLI guards still apply.
 The Operator's system prompt includes OVRCR's own CLI guide before the first
 message in both the full composer and Quick message. That guide is compiled into
 OVRCR, keeps the inherited instance, socket and captured target, and is available
-without a checkout. The separate coordinator skill is materialized in the
-private Operator profile and advertised to Pi by its explicit `--skill` path.
-When coordinating work, Pi reads that file on demand. Automatic discovery stays
-off, so personal and project skills are not loaded. The CLI guide remains only
+without a checkout. The bundled `ovrcr-status`, `ovrcr-workspaces`,
+`ovrcr-coordinator`, `ovrcr-session-care` and `ovrcr-cleanup` skills,
+including supporting references, are materialized in the private Operator
+profile and advertised to Pi by their exact `--skill` paths. Pi reads the relevant
+instructions on demand. Automatic discovery stays off, so personal, Project and
+leftover unregistered skills are not loaded. Required asset failures prevent
+prompting. A warm worker keeps its bundle through follow-up turns and compaction;
+updated instructions are adopted at a later cold start without stopping live work. The CLI guide remains only
 in system prompt text; it never appears in your conversation, tool results or
 journal. Every ordinary model request, including one after Pi compacts context
 automatically, receives the guide.
+
+## Ask for an overview
+
+Ask “What needs attention across OVRCR?” in full Operator or Quick message.
+Status defaults to all registered Projects in the current instance, not just the
+captured Workspace. Ask for a particular Project, Workspace or session to narrow
+it. Each report states its scope and distinguishes observed activity from
+unavailable reporting. Live Workspace capacity counts running and paused Agents
+and Terminals against fifty slots; Operator has a separate slot.
+
+Status starts with inventory metadata. It reads session content only when the
+requested inspection needs it, preserves Unread and Input requests, and does not
+acknowledge ownership, create or control resources, or start periodic checks.
+
+## Prepare a Project Workspace
+
+Ask “Inspect Project example without creating anything” or “Create feature/auth
+in example from main and open a managed Pi Agent.” The bundled
+`ovrcr-workspaces` procedure inspects current registrations and checkouts first,
+reuses suitable Workspaces and sessions, and registers a repository only when
+requested. A new branch needs your explicit base. Ambiguous branch labels and
+detached checkouts prompt for an exact path rather than choosing a checkout.
+
+Registration keeps Root's current branch. Root remains protected from removal
+and delegated feature edits; new Root launches are refused off the repository's
+default branch. Provisioning preserves your `automatic_local_terminals` setting:
+any automatic `local` shell is distinct from an explicitly requested launch.
+
+The result identifies the Project, Workspace id/path/branch and session id/run,
+and distinguishes reuse, creation, verified readiness and blockers. An Agent's
+label, process creation or successful input write does not prove readiness.
+Operator inspects its actual composer and provider observations, surfaces
+unexpected setup/trust/approval questions without answering, and sends tasks
+only when requested. Partial effects are reconciled before any retry; resources
+stay available afterward.
+
+## Diagnose, control or recover a session
+
+Ask “Why does session 12 appear stuck?” in full Operator or Quick message.
+`ovrcr-session-care` resolves the current Project, Workspace and session run,
+then distinguishes ongoing work, an Input request, a response ready for review,
+idle, exit/interruption and unavailable reporting. It reads only relevant content:
+Claude Code/Codex transcripts or Pi/Oh My Pi terminal observations. Missing or
+truncated content remains a gap, not proof of completion.
+
+Diagnosis reports what is known, unknown and the next supported action. It
+leaves processes, Unread, Input requests and ownership acknowledgements unchanged.
+Uncertain prior-process ownership requires human verification. Diagnosis alone
+is read-only; suggested actions are not performed.
+
+Explicit requests such as “Pause session 12”, “Stop session 12”, or “Resume the
+retained conversation for session 12” use the verified session/run and Server
+admission fences. Process resume and Conversation resume are different actions.
+A precise close request stops owned processes and archives the record without a
+redundant generic confirmation; it does not delete history or remove a Workspace.
+Terminal reopen starts a fresh shell. Agent recovery uses only its certified
+retained reference, never a picker, new conversation or replayed prompt. Failed
+recovery preserves the record and evidence; awaiting native attachment remains
+visible rather than being called successful recovery. Changed runs and uncertain
+ownership are refused, not automatically acknowledged or retried on replacements.
+
+## Preview and approve cleanup
+
+Ask “What old sessions and unused Workspaces could I clean up?” or send
+`/skill:ovrcr-cleanup` in full Operator or Quick message. General Cleanup proposals
+cover all registered Projects by default; name a Project, Workspace or session
+to narrow the scope. The default review filter is 24 hours since Last activity
+(Agent-state change or user input), with request-local overrides. Missing times
+stay unknown, and age is not proof of completion.
+
+The proposal names exact resources and session runs, observations, ages, effects
+and blockers. It separates stopped-record archive from separately approved
+Workspace removal. Live sessions stay unchanged. Busy, paused,
+Unread, WaitingInput, watched, task-owned and uncertain work stays protected;
+Operator conversations are excluded. Dirty or occupied checkouts, Root, active
+tasks and provider-history dependencies block Workspace removal. Unmerged or
+unpublished work and unverifiable history locations remain visible.
+
+Preview changes nothing and waits for approval. Approve selected listed stopped
+records to archive just those exact runs. The Server refuses reopened/live,
+ownership-uncertain, watched, task-owned or attention-protected targets at action
+admission; an unrelated watch does not block an eligible record. Archived records
+retain their context and provider history. Reports separate verified completion,
+changed/skipped, refused and uncertain effects; lost replies are reconciled against
+inventory, never blindly retried with a new run.
+
+Separately approve listed clean, unused non-Root Workspaces to remove just those
+checkouts. Every associated session must already be archived through its own
+approval. The proposal binds repository, Workspace id/path/Git generation,
+branch/HEAD and archived runs; changed state refuses at Server admission. Dirty
+files refuse even with automatic WIP saving on: cleanup never saves, pushes or
+forces removal. Branches and archived original context stay. Git/registry partial
+failures preserve recovery records and report actual state rather than rollback.
+
+To reclaim a live Agent, first make a separate explicit session-care stop request.
+After it stops, request cleanup and separately approve archival of the eligible
+record. Archive approval cannot stop processes, acknowledge ownership, delete
+records or remove checkout files. No periodic check is started.
 
 ## Coordinate Workspace sessions
 
@@ -269,15 +371,39 @@ never silently follows the Dashboard selection.
 Typing a single-segment `/command` at the very start of the full Operator
 composer opens a live slash-command menu above the input rule (`Up`/`Down`
 select, `Tab` autocomplete, `Enter` run, `Esc` dismiss menu only while keeping
-the draft). Both the full composer and Quick message (`Ctrl-o`) support seven
+the draft). Both the full composer and Quick message (`Ctrl-o`) support eight
 built-in slash commands (`/copy`, `/thinking`, `/model`, `/new`, `/session`,
-`/compact`, `/tree`). Multi-segment Unix paths such as `/etc/hosts` or drafts
+`/compact`, `/tree`, `/skills`), plus explicit `/skill:<name> [request]` submission.
+Multi-segment Unix paths such as `/etc/hosts` or drafts
 with leading whitespace (` /copy`) submit as normal user prompts, whereas an
 unknown single-segment `/command` is rejected locally with the draft preserved.
 In Quick message, `/copy`, `/thinking <level>`, `/model default`, exact
 `/model <provider/id>` matches and `/new` complete directly; `/session`,
 `/compact`, `/tree`, bare `/thinking`, bare `/model` and filtered
-`/model <query>` transition into the full Operator view.
+`/model <query>` and `/skills` transition into the full Operator view.
+
+`/skills [request]` opens the shipped catalog without starting model work. Type
+to search names and purposes, use Up/Down to select, then Enter or click a row
+to prepare `/skill:<name> [request]` in the shared draft. Send is a separate
+step. To keep an existing request, insert `/skills ` at its beginning (Home,
+then type or paste the prefix). Esc or a click outside the picker cancels without
+changing the draft. Quick-to-full browsing keeps the draft's captured target;
+searching and choosing do not recapture the selected Workspace. Below 60×16,
+resize to continue; the draft and picker stay intact.
+
+Send `/skill:ovrcr-status [request]` or `/skill:ovrcr-coordinator [request]`
+from either composer to select that shipped procedure. OVRCR supplies its full
+instructions and reference location before model work, after the captured target
+and before your distinct request. With no request, the procedure follows its
+normal flow and asks for missing required information. Selection grants no extra
+tools or permission to act.
+
+Unknown or incompatible selections fail visibly instead of becoming ordinary
+messages. Local refusal keeps the draft; a worker startup failure keeps the
+accepted request and error in the journal for an explicit retry. Busy and
+stop-unconfirmed states keep named drafts just like ordinary drafts. The selected
+identity stays in history across reconnect; worker instructions refresh only at
+a later cold start. Native Pi commands such as `/reload` are not forwarded.
 
 - `/copy` copies the latest visible assistant reply on the active branch as raw
   Markdown (OSC 52 clipboard, capped at 64 KiB) without starting a worker, or

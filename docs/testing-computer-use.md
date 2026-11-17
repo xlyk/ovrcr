@@ -418,6 +418,26 @@ export OVRCR_OPERATOR_GUI_TOKEN=operator-gui-owned-fixture
 
 Wait for `OPERATOR_PI_GUI_READY` before sending.
 
+For the skill picker, use the same helper in its default mode. Select a task-owned
+Workspace session, open Operator and type `GUI_SKILLS_REQUEST`; Home then insert
+`/skills ` and Enter. Capture the catalog names/purposes, search `INVENTORY`,
+then Esc: the original `/skills GUI_SKILLS_REQUEST` and target must remain.
+Reopen, search `ovrcr-status`, and choose with Enter or a row click. Capture the
+staged `/skill:ovrcr-status GUI_SKILLS_REQUEST` before Send: the conversation
+must still be idle with no model request. Send once and capture
+`SKILLS_PICKER_DONE`; the helper checks that the full selected status document
+arrived. Repeat from Browse via Quick message, including a cold singleton;
+the transition to full must retain text and target. Test outside-click cancellation,
+Up/Down, empty search results, 80×24, 60-column, 60×16 and below-floor resize
+recovery. Record screenshots and matching accessibility text for each step.
+Send `/skill:unavailable GUI_SKILLS_UNSENT` to capture the visible refusal and
+retained draft. During `REQUEST_THREE_HELD`, browse/choose another skill and
+attempt Send: busy refusal must retain the staged request. Keep the Workspace
+session input observation unchanged. On helper exit retain `fixture-requests.jsonl`
+and verify no requests from browsing/cancellation and context-before-instructions-
+before-request ordering on Send. Programmatic stale-revision and stop-unconfirmed
+fixtures remain separate from what this native walkthrough actually observes.
+
 The helper prints the fixture workspace and marker path when it starts. It does
 not interpret arbitrary requests: each turn must contain one of its exact markers,
 otherwise it answers only `FIXTURE_FOLLOWUP_DONE`. Send this sequence:
@@ -467,6 +487,84 @@ confirm independent output, then reopen with `o` and confirm history and the dra
 remain. Resize to narrow and wide layouts, then reconnect the Dashboard and
 confirm the same conversation is attached (startup `Current` creates nothing).
 Keep fresh screenshots and AX text for every changed state.
+
+For bundled status, the same helper recognizes the ordinary request
+`What needs attention across OVRCR?` without a special mode. Send it from full
+Operator, then from Quick message in the same fixture. Open the reply and retain
+screenshots/AX showing the stated instance-wide scope, Project/Workspace/session
+inventory and Workspace capacity separate from Operator. Expand the read receipts
+for `ovrcr-status/SKILL.md`, its `references/inventory.md`, and the matching-instance
+CLI inventory. Compare external inventory before/after: runs, Unread and Input
+requests must remain unchanged. For narrower scope in a fixture with Project
+`fixture`, use `Show status only for Project fixture.`. The scripted provider
+supports these exact phrases, not arbitrary rephrasings. No catalog picker or
+explicit skill command is part of this status-only walkthrough.
+
+For proposal-only cleanup, the same helper recognizes `Preview cleanup` and
+`/skill:ovrcr-cleanup Preview cleanup hours=0 project=fixture` without a new mode.
+Use the first from full Operator (default instance-wide, 24 hours), the second
+from Quick (only the named Project, request-local threshold). The helper performs
+actual shipped-instruction reads, `watch_sessions(list)`, matching-instance
+inventory and read-only Git inspections; it creates no cleanup resources for you.
+Use task-owned populated Projects/Workspaces and retain external before/after
+inventory (including archived rows and task runs), Git refs/status/HEAD and
+provider-history bytes. Capture screenshots/AX of scope, exact session/run and
+Workspace identities, blockers and **Cleanup execution unavailable**. Add
+`approve all actions` to a preview request and verify the same no-change result.
+Keep read/tool receipts and final provider requests with the native evidence;
+headless classifications alone do not prove keyboard or visible outcomes.
+
+For separately approved Workspace removal, the same helper accepts these exact
+full/Quick inputs (replace the JSON placeholders with task-owned identities):
+
+```text
+/skill:ovrcr-cleanup Workspace cleanup {"mode":"preview","targets":[{"project":"PROJECT","path":"PATH"}]}
+/skill:ovrcr-cleanup Workspace cleanup {"mode":"remove","targets":[ORIGINAL_OBSERVATION_JSON]}
+```
+
+Prepare three clean non-Root checkouts in the private instance; archive any
+associated records through separate explicit approval first. Include an unmerged,
+unpublished commit and retain its branch ref. Send the preview from full Operator
+and capture the scoped proposal, read receipt and no-change outcome. Copy each
+original observation from the `WORKSPACE_CLEANUP` tool result; preserve it unchanged.
+Make one checkout dirty, enable `save_uncommitted_work` only in the private fixture,
+and approve that checkout plus one still-clean checkout through Quick, leaving
+the third unapproved. Capture `verified completed` and `refused` with screenshots
+and AX, then independently verify inventory, absent selected files, unchanged
+unapproved/dirty files, branch refs and archived original cwd/run/history. Restore
+the fixture's WIP setting before teardown. The helper's preview uses `main` only
+as its fixture base; production guidance requires the observed repository policy.
+These helper plans do not seed Workspaces or infer approval from an archive request.
+Retain request/tool JSON and original failed attempts alongside native receipts.
+
+For Workspace provisioning, use `OVRCR_OPERATOR_GUI_WORKSPACES=1` with the
+same private HOME ownership marker required by the coordinator helper. This seeds
+only the private Operator and Workspace Pi profiles; it creates no sessions.
+Prepare a task-owned Git repository at `$HOME/repo` on `main` and an empty instance
+(no registered Projects), preserving the GUI fixture's ownership receipts. Keep
+`OVRCR_PI_EXECUTABLE` pointed at installed Pi in the GUI launch environment.
+The provider recognizes these exact marker prefixes followed by the stated request:
+
+1. `WORKSPACES_inspect: Inspect $HOME/repo only; do not register or launch.`
+   Expand the shipped `ovrcr-workspaces/SKILL.md` read and CLI receipts. Confirm no
+   Project or Workspace session was added.
+2. `WORKSPACES_provision: Register $HOME/repo as fixture with $HOME/fixture-workspaces;
+   create feature/setup from main, preserving automatic-local-terminal policy.`
+   Observe the created Workspace and exact path/branch in the reply and hierarchy.
+3. `WORKSPACES_reuse: Reuse fixture's feature/setup without creating or launching.`
+   Send from Quick message and confirm the same Workspace id/path survives.
+4. `WORKSPACES_terminal: Open requested-terminal in feature/setup; print its cwd
+   then open /bin/sh.` Send again requesting reuse; verify the same session/run.
+5. `WORKSPACES_agent: Launch managed Pi in feature/setup; after its composer is
+   visible send the readiness probe and verify its response.` Confirm the Agent's
+   actual PTY shows `WORKSPACES_AGENT_RESPONSE`, not just command echo. Keep the
+   provider request and CLI inventory evidence alongside screenshots/AX.
+
+The helper also accepts `WORKSPACES_missing-base: Show the missing-base CLI refusal
+and ask me for a base.` No resource may be created. The deterministic ambiguous,
+detached, off-default Root and unanswered trust-screen cases are in the installed
+headless gate; native evidence must be collected separately, not inferred from it.
+Stop only owned fixture resources at cleanup, retaining original process receipts.
 
 For leased multi-session coordination, use the helper's
 `OVRCR_OPERATOR_GUI_COORDINATOR=1` scenario with a fresh private HOME and matching

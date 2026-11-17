@@ -33,6 +33,7 @@ the current directory. A new terminal can omit its name for a stable generated n
 
 `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`,
 `project add`, `workspace create`, and the dashboard start a server on demand.
+`terminal reopen --expected-run RUN` instead requires the running Server.
 
 Read commands never start one. They never write, migrate the registry, or launch
 a shell. With no server running, project and workspace queries read the existing
@@ -82,7 +83,12 @@ the text table includes it as the last column, including for archived records.
 Both the table and JSON include Last activity. It advances when an agent changes
 state or a user sends terminal input; terminal output, focus, and selection do
 not count. If no activity has been recorded, it uses the session start time when
-available.
+available. Offline retained rows may have a null timestamp; consumers must not
+invent an age. Session JSON additionally includes `assignment_control` when the
+Server has an assigned-child view: its handle, control owner/epoch/barrier and
+optional evidence retain their existing meaning. Controller, Human and Uncertain
+are all assigned work, not cleanup permission. An absent view does not prove
+unowned work; scheduled task runs are inspected separately with `run list`.
 
 `workspace get` and `workspace remove` take `--project` with `--branch` (the
 current checkout branch; slashes such as `feature/cleanup` are valid) or `--path`
@@ -192,6 +198,32 @@ The Dashboard Events popup is not part of this command.
 
 ## Workspace removal
 
+Proposal-first cleanup uses a separate guarded pair (both require the running
+Server):
+
+```sh
+ovrcr --json workspace removal-preview --project example --path /absolute/worktree
+# After separate approval of that exact removal, pass its ORIGINAL JSON:
+ovrcr --json workspace remove-approved --expected "$APPROVED_OBSERVATION_JSON"
+```
+
+`removal-preview` always returns JSON and changes nothing. It binds Project repo,
+Workspace root, id/path/Git generation, current branch/HEAD and archived session
+runs. Root, dirty or occupied checkouts, uncertain ownership (including archived
+rows), task/assignment/watch protection and recorded provider history inside the
+checkout refuse. Active-list records require separate archive approval first.
+`remove-approved` revalidates under the same task/lifecycle admission through
+commit. Changed state, replacements and newly occupied paths refuse. It has no
+force or WIP-saving path, even when `save_uncommitted_work` is enabled. It never
+archives sessions, acknowledges ownership, pushes, or deletes branches/records.
+The caller must separately explain unmerged/unpublished work before approval.
+
+On timeout or PartialFailure, reconcile the original Workspace id, path, Git
+registration and archived records. Files may be gone while registration remains;
+no rollback is claimed. A missing original checkout refuses strict replay rather
+than pruning recovery evidence. Neither command substitutes a refreshed proposal
+for the original approval.
+
 `workspace remove` is explicit confirmation to remove the clean worktree and
 archive its stopped session records. Running, paused, and ownership-uncertain
 sessions block removal, including uncertain archived records. Dirty-worktree,
@@ -294,6 +326,32 @@ retry still attempts the exact conversation. Providers without a native picker k
 the error. The shell remains usable when the agent exits. Reopen starts the server
 if it is not running. With `--json`, reopen returns the terminal object and rename
 returns `{"ok":true}`.
+
+For caller-bound control, capture `run` from `terminal list --json` and pass
+`--expected-run RUN` to `pause`, `resume`, `kill`, `terminal kill`,
+`terminal close`, or `terminal reopen`. The Server refuses a changed run at action
+admission; the CLI never substitutes a newer inventory run. Existing commands
+without the flag retain their behavior. Fenced reopen requires the running
+Server and cannot combine with `--ack-stopped`: Terminal reopen starts a fresh
+shell; Agent reopen requires certified exact recovery and refuses missing or
+invalid references without native-picker fallback. A successful process launch
+is not attachment proof; inspect `recovery.attached` and the conversation identity.
+
+`terminal archive-stopped ID --expected-run RUN` requires the running Server and
+an explicit approved run. It archives only an ownership-resolved stopped record:
+no process termination, ownership acknowledgement or Workspace removal. At admission
+it refuses live/reopened/archived targets, Operator scope, protected attention,
+assignments, task-owned Workspaces and exact active watches/queued reports.
+Retained Git task ownership (`workspace` still set) and Scratch directory references
+remain protected after completion. A valid terminal Git run with released or
+never-acquired ownership (`workspace: null`) does not reclaim a historical path;
+other session guards still apply. Malformed/unavailable task evidence refuses.
+Missing
+Operator watch state is an uncertainty refusal, not an empty watch list. Unlike
+`terminal close`, it can never stop a live session. Success returns `{"ok":true}`;
+verify the id in `terminal list --archived` with run `RUN+1`. A lost reply requires
+reconciling active and archived inventory for that original id/run, not replaying
+against refreshed identities. Records, context, branches and provider history stay.
 
 CLI inventory remains passive. The Dashboard's first visible display can recover
 an eligible interrupted Agent after a verified reboot; it never acknowledges

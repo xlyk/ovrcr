@@ -28,8 +28,6 @@ const PROFILE_DIR: &str = "operator-pi";
 const WORKDIR_DIR: &str = "operator-workdir";
 const TURNS_DIR: &str = "turns";
 const EXTENSION_FILE: &str = "pi-operator-extension.mjs";
-const COORDINATOR_SKILL_DIR: &str = "ovrcr-coordinator";
-const COORDINATOR_SKILL_FILE: &str = "SKILL.md";
 const TOOLS: &str = "read,bash,edit,write,watch_sessions";
 const MODEL_DEADLINE: Duration = Duration::from_secs(20);
 const MODEL_LIMIT: usize = 4096;
@@ -39,8 +37,9 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 /// its OVRCR operating guide before the first model request without reading a
 /// checkout or discovering any skill at runtime. `--no-skills` stays in force.
 const BUNDLED_SKILL: &str = include_str!("../../.agents/skills/ovrcr/SKILL.md");
-const BUNDLED_COORDINATOR_SKILL: &str = include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md");
 const SYSTEM_PROMPT_GAP: &str = "\n\n";
+
+use ovrcr_protocol::operator::skills::BUNDLED_SKILLS;
 
 /// Fixed, non-native user-facing failures. Native stderr and provider bodies
 /// never reach a message.
@@ -299,19 +298,53 @@ pub fn materialize_extension(paths: &PiPaths) -> Result<PathBuf, PiError> {
     Ok(target)
 }
 
-/// Materialize the separate coordinator skill under the dedicated profile.
-/// Pi receives only this explicit file while automatic discovery stays off.
-pub fn materialize_coordinator_skill(paths: &PiPaths) -> Result<PathBuf, PiError> {
-    let directory = paths.profile.join(COORDINATOR_SKILL_DIR);
-    prepare_private_dir(&directory)?;
-    let target = directory.join(COORDINATOR_SKILL_FILE);
-    materialize_private_file(
-        &directory,
-        &target,
-        BUNDLED_COORDINATOR_SKILL.as_bytes(),
-        "coordinator skill",
-    )?;
-    Ok(target)
+/// Called only at cold launch. Warm turns, resume and compaction within a run
+/// keep the same documents and Pi metadata; a later cold launch refreshes them.
+fn materialize_skills(paths: &PiPaths) -> Result<Vec<PathBuf>, PiError> {
+    let mut documents = Vec::with_capacity(BUNDLED_SKILLS.len());
+    for skill in BUNDLED_SKILLS {
+        // Owned documents use a deliberately small frontmatter format. Refuse a
+        // broken bundle before Pi can silently omit a required skill.
+        if skill.description().is_none() {
+            return Err(PiError::integration("invalid bundled skill document"));
+        }
+        let directory = paths.profile.join(skill.name);
+        prepare_private_dir(&directory)?;
+        for (relative, contents) in
+            std::iter::once(("SKILL.md", skill.document)).chain(skill.assets.iter().copied())
+        {
+            let relative = Path::new(relative);
+            if contents.is_empty()
+                || relative.as_os_str().is_empty()
+                || !relative
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+            {
+                return Err(PiError::integration("invalid bundled skill asset"));
+            }
+            let target = directory.join(relative);
+            let mut parent = directory.clone();
+            for part in relative.parent().unwrap().components() {
+                parent.push(part);
+                prepare_private_dir(&parent)?;
+            }
+            match fs::symlink_metadata(&target) {
+                Ok(metadata)
+                    if metadata.is_file()
+                        && !owner_rejected(metadata.uid(), unsafe { libc::geteuid() } as u32)
+                        && !mode_rejected(metadata.mode()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                _ => {
+                    return Err(PiError::integration(
+                        "bundled skill asset is not a private regular file",
+                    ));
+                }
+            }
+            materialize_private_file(&parent, &target, contents.as_bytes(), "skill asset")?;
+        }
+        documents.push(directory.join("SKILL.md"));
+    }
+    Ok(documents)
 }
 
 fn materialize_private_file(
@@ -354,10 +387,12 @@ pub fn rpc_command(
     }
     let system_prompt = format!("{policy}{SYSTEM_PROMPT_GAP}{BUNDLED_SKILL}");
     let extension = paths.profile.join(EXTENSION_FILE);
-    let coordinator_skill = materialize_coordinator_skill(paths)?;
+    let skills = materialize_skills(paths)?;
     let mut command = Command::new(executable()?);
     command.args(["--mode", "rpc", "--no-extensions", "--no-skills"]);
-    command.arg("--skill").arg(coordinator_skill);
+    for document in skills {
+        command.arg("--skill").arg(document);
+    }
     command.args([
         "--no-prompt-templates",
         "--no-themes",
@@ -1003,7 +1038,31 @@ mod tests {
                 "--skill",
                 paths
                     .profile
+                    .join("ovrcr-status/SKILL.md")
+                    .to_str()
+                    .unwrap(),
+                "--skill",
+                paths
+                    .profile
                     .join("ovrcr-coordinator/SKILL.md")
+                    .to_str()
+                    .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-workspaces/SKILL.md")
+                    .to_str()
+                    .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-session-care/SKILL.md")
+                    .to_str()
+                    .unwrap(),
+                "--skill",
+                paths
+                    .profile
+                    .join("ovrcr-cleanup/SKILL.md")
                     .to_str()
                     .unwrap(),
                 "--no-prompt-templates",
@@ -1027,7 +1086,7 @@ mod tests {
             "the bundled CLI skill is appended exactly once"
         );
         assert!(
-            !system_prompt.contains(BUNDLED_COORDINATOR_SKILL),
+            !system_prompt.contains(BUNDLED_SKILLS[1].document),
             "the coordinator skill stays separate from the system-only CLI guide"
         );
         let coordinator_skill = paths.profile.join("ovrcr-coordinator/SKILL.md");
@@ -1039,6 +1098,53 @@ mod tests {
         assert_eq!(
             fs::read_to_string(coordinator_skill).unwrap(),
             include_str!("../../pi/skills/ovrcr-coordinator/SKILL.md")
+        );
+        let status = paths.profile.join("ovrcr-status/SKILL.md");
+        let reference = paths.profile.join("ovrcr-status/references/inventory.md");
+        assert_eq!(
+            fs::read_to_string(&status).unwrap(),
+            include_str!("../../pi/skills/ovrcr-status/SKILL.md")
+        );
+        assert_eq!(
+            fs::read_to_string(&reference).unwrap(),
+            include_str!("../../pi/skills/ovrcr-status/references/inventory.md")
+        );
+        let workspaces = paths.profile.join("ovrcr-workspaces/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&workspaces).unwrap(),
+            include_str!("../../pi/skills/ovrcr-workspaces/SKILL.md")
+        );
+        let care = paths.profile.join("ovrcr-session-care/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&care).unwrap(),
+            include_str!("../../pi/skills/ovrcr-session-care/SKILL.md")
+        );
+        assert!(
+            !system_prompt.contains(include_str!("../../pi/skills/ovrcr-session-care/SKILL.md")),
+            "session care is read on demand"
+        );
+        let cleanup = paths.profile.join("ovrcr-cleanup/SKILL.md");
+        assert_eq!(
+            fs::read_to_string(&cleanup).unwrap(),
+            include_str!("../../pi/skills/ovrcr-cleanup/SKILL.md")
+        );
+        assert!(
+            !system_prompt.contains(include_str!("../../pi/skills/ovrcr-cleanup/SKILL.md")),
+            "cleanup is read on demand"
+        );
+        for asset in [&status, &reference, &workspaces, &care, &cleanup] {
+            let metadata = fs::symlink_metadata(asset).unwrap();
+            assert!(metadata.is_file());
+            assert_eq!(metadata.mode() & 0o777, 0o600);
+            assert_eq!(metadata.uid(), unsafe { libc::geteuid() } as u32);
+            assert_eq!(
+                fs::metadata(asset.parent().unwrap()).unwrap().mode() & 0o777,
+                0o700
+            );
+        }
+        assert!(
+            !system_prompt.contains(include_str!("../../pi/skills/ovrcr-status/SKILL.md")),
+            "status instructions are read on demand, not duplicated in policy"
         );
         assert_eq!(argv[prompt + 2].as_str(), "--extension");
         assert_eq!(
@@ -1069,6 +1175,28 @@ mod tests {
             "operator-3"
         );
         assert_eq!(paths.attempt_dir(OperatorTurnId(9)), paths.turns.join("9"));
+    }
+
+    #[test]
+    fn rpc_refuses_symlinked_required_skill_asset() {
+        let instance = temp_instance();
+        let paths = paths(instance.path()).unwrap();
+        let directory = paths.profile.join("ovrcr-status/references");
+        fs::create_dir_all(&directory).unwrap();
+        let victim = instance.path().join("outside.md");
+        fs::write(&victim, "outside bytes").unwrap();
+        std::os::unix::fs::symlink(&victim, directory.join("inventory.md")).unwrap();
+        assert!(
+            rpc_command(
+                &paths,
+                &paths.run_dir(SessionRunId(1)),
+                OperatorConversationId(3),
+                "policy",
+            )
+            .is_err(),
+            "invalid required assets must prevent launch construction"
+        );
+        assert_eq!(fs::read_to_string(victim).unwrap(), "outside bytes");
     }
 
     #[test]

@@ -618,6 +618,23 @@ pub(super) fn handle_request_with_id(
                 }
             }
         }
+        Request::ControlSession {
+            session,
+            expected_run,
+            action,
+        } => {
+            let result =
+                state.control_session(session, expected_run, action, requested_kill_grace());
+            state
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                    state.hierarchy(),
+                )));
+            result.map_or_else(error_for_lifecycle, |summary| match summary {
+                Some(summary) => Response::CreatedSession(Box::new(summary)),
+                None => Response::Ok,
+            })
+        }
         Request::PauseSession { session } => state
             .set_session_paused(session, true)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
@@ -1108,6 +1125,24 @@ pub(super) fn handle_request_with_id(
                     ))));
             }
             result.map_or_else(error_for_lifecycle, |_| Response::Ok)
+        }
+        Request::PreviewWorkspaceRemoval { project, workspace } => state
+            .preview_workspace_removal(&project, &workspace)
+            .map_or_else(error_for_lifecycle, |observation| {
+                Response::WorkspaceRemoval(Box::new(observation))
+            }),
+        Request::RemoveApprovedWorkspace(expected) => {
+            state.remove_approved_workspace(&expected).map_or_else(
+                |error| lifecycle_response_with_partial_hierarchy(state, error),
+                |_| {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                    Response::Ok
+                },
+            )
         }
         Request::RemoveWorkspace {
             project,

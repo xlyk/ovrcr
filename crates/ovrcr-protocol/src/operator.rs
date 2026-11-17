@@ -1,4 +1,7 @@
 //! SDK-independent native Operator conversation and worker protocol.
+pub mod skills;
+pub use skills::OperatorSkillSelection;
+
 use crate::{SessionId, SessionRunId, SupervisorAuth};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -526,6 +529,8 @@ fn validate_text(value: &str) -> Result<(), String> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorMessageContent {
     User {
+        #[serde(default)]
+        skill: Option<OperatorSkillSelection>,
         text: String,
         context: OperatorContext,
     },
@@ -607,6 +612,7 @@ pub enum OperatorRequest {
         limit: u16,
     },
     Submit {
+        skill: Option<OperatorSkillSelection>,
         conversation: OperatorConversationId,
         expected_run: SessionRunId,
         text: String,
@@ -681,6 +687,7 @@ impl OperatorRequest {
                 Ok(())
             }
             Self::Submit {
+                skill,
                 conversation,
                 text,
                 context,
@@ -689,8 +696,15 @@ impl OperatorRequest {
                 if conversation.0 == 0 {
                     return Err("zero conversation identity".into());
                 }
-                validate_text(text)?;
-                if text.trim().is_empty() {
+                if let Some(skill) = skill {
+                    skill.resolve()?;
+                    if text.len() > MAX_OPERATOR_TEXT_BYTES || text.contains('\0') {
+                        return Err("invalid operator text bounds".into());
+                    }
+                } else {
+                    validate_text(text)?;
+                }
+                if text.trim().is_empty() && skill.is_none() {
                     return Err("empty operator message".into());
                 }
                 context.validate()
@@ -782,6 +796,7 @@ impl Default for OperatorSettings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerSubmission {
     Prompt {
+        skill: Option<OperatorSkillSelection>,
         text: String,
         context: OperatorContext,
         /// Pi has already started this prompt through its native async input API.
@@ -810,6 +825,38 @@ pub struct OperatorWorkerStart {
     #[serde(default)]
     pub tree_target_id: Option<String>,
 }
+/// Complete worker-scoped watch protection, including queued reports.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorWatchTarget {
+    pub session: SessionId,
+    pub run: SessionRunId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorWatchUpdate {
+    pub revision: u64,
+    pub targets: Vec<OperatorWatchTarget>,
+}
+
+impl OperatorWatchUpdate {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.revision == 0
+            || self.targets.len() > 50
+            || self.targets.iter().enumerate().any(|(i, target)| {
+                target.session.0 == 0
+                    || self.targets[..i]
+                        .iter()
+                        .any(|other| other.session == target.session)
+            })
+        {
+            return Err("invalid Operator watch protection".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperatorWorkerCommand {
     Start {
@@ -836,6 +883,10 @@ pub enum OperatorWorkerCommand {
         identity: OperatorRunIdentity,
         text: String,
     },
+    SetWatches {
+        identity: OperatorRunIdentity,
+        update: OperatorWatchUpdate,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorWorkerRequest {
@@ -846,14 +897,55 @@ pub struct OperatorWorkerRequest {
 pub enum OperatorWorkerResult {
     Start(Box<OperatorWorkerStart>),
     StartTurn(Option<Box<OperatorWorkerStart>>),
-    Aborted { identity: OperatorTurnIdentity },
-    Retired { identity: OperatorTurnIdentity },
+    Aborted {
+        identity: OperatorTurnIdentity,
+    },
+    Retired {
+        identity: OperatorTurnIdentity,
+    },
     BeginAsyncTurn(Option<Box<OperatorWorkerStart>>),
+    WatchesSet {
+        identity: OperatorRunIdentity,
+        revision: u64,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn watch_projection_is_complete_bounded_and_unambiguous() {
+        let mut update = OperatorWatchUpdate {
+            revision: 1,
+            targets: (1..=50)
+                .map(|id| OperatorWatchTarget {
+                    session: SessionId(id),
+                    run: SessionRunId(1),
+                })
+                .collect(),
+        };
+        assert!(update.validate().is_ok());
+        update.targets.push(OperatorWatchTarget {
+            session: SessionId(51),
+            run: SessionRunId(1),
+        });
+        assert!(update.validate().is_err());
+        update.targets.pop();
+        update.targets[1] = update.targets[0].clone();
+        assert!(update.validate().is_err());
+        update.targets.clear();
+        assert!(update.validate().is_ok());
+        update.revision = 0;
+        assert!(update.validate().is_err());
+        assert!(serde_json::from_str::<OperatorWatchUpdate>(r#"{"revision":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<OperatorWatchUpdate>(
+                r#"{"revision":1,"targets":[],"partial":true}"#
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn stored_failed_worker_rows_keep_their_historical_json_shape() {
         let raw = r#"{"Worker":{"Failed":"Pi request failed; inspect the partial journal before retrying."}}"#;

@@ -43,6 +43,7 @@ const UNSUPPORTED_INTERACTION: &str = "Unsupported Pi interaction; the turn was 
 /// The trusted extension's startup contract and watch-lease status keys.
 const CONTRACT_KEY: &str = "ovrcr_operator_contract";
 const WATCHES_KEY: &str = "ovrcr_operator_watches";
+const WATCH_PROTECTION_TITLE: &str = "OVRCR Operator watch protection";
 const TOOLS: [&str; 5] = ["read", "bash", "edit", "write", "watch_sessions"];
 const ADMISSION_TITLE: &str = "OVRCR Operator tool admission";
 const RESULT_TITLE: &str = "OVRCR Operator tool result";
@@ -56,14 +57,14 @@ const TREE_RESULT_KEY: &str = "ovrcr_operator_tree_result";
 const POLICY: &str = concat!(
     "You are OVRCR Operator, the agent inside a user's OVRCR instance. Act only on the user's requested task. ",
     "Operate the instance through bash by running the matching OVRCR CLI: \"$OVRCR_EXECUTABLE\" --json, with the inherited instance configuration and socket. ",
-    "Use the exact project, workspace, session and run identities captured in the context; honor refusals and never guess control authority. ",
+    "Status overviews default to all registered Projects in this instance; general Cleanup proposals use the same default. Honor explicitly narrower requests and state the inspection scope. Resolve inspected resources from current inventory. For actions on the captured target, use its exact project, workspace, session and run identities; honor refusals and never guess control authority. ",
     "The captured context is fixed for this message, and a later Dashboard selection change never retargets this turn. ",
     "Your process working directory stays <instance>/operator-workdir for the whole conversation and is not the selected workspace: pass the captured absolute paths to read, edit and write, and put \"cd <captured cwd>\" inside bash when operating a Workspace. ",
     "Use the bundled coordinator skill for multi-session work. Keep quick single-step inspections in Operator. For coding delegation, use separate Git worktree Workspaces on dedicated branches and honor Root workspace protections; share a Workspace only for read-only research or when the user explicitly requests the same branch. ",
     "Provision or reuse visible Retained Agent sessions in phase running. Capture each session's run, numeric agent.activity_revision, and opaque unread.turn (string or null) from terminal list --json before terminal send. Send tasks with Paste, request OVRCR_WORKER_DONE summary/files/checks or OVRCR_WORKER_BLOCKED reason/need trailers, then register each baseline with watch_sessions(add). Return a Task/Workspace/Session table and end the turn without polling so the composer stays available. ",
     "Use watch_sessions only to add, list, or remove bounded watches for OVRCR Workspace Agent sessions; it reports lifecycle state and never reads terminal content. On AsyncWakeup, inspect only replies from the watched sessions: Claude Code and Codex via terminal transcript --json (use terminal read tail for a transcript entry truncated at 16 KiB), Pi and Oh My Pi via terminal read or terminal screen. If a trailer is absent, inspect the reply once and report what it says without retrying for formatting. ",
     "For coding results, verify git status, git diff --stat, and each reported check's actual exit code in the matching Workspace before reporting ready for review. Handle factual blockers within the user's scope; ask the user about human decisions or waiting_input prompts. Leave finished Retained sessions open unless asked to close or archive them. ",
-    "Read terminal content only for sessions the user asked you to monitor or that you created or selected for their requested delegation. Do not send session content outside this task, and do not inspect credentials, tokens or personal agent profiles. ",
+    "Begin inspection with metadata; read session content only when relevant to the user's requested inspection, monitoring or delegation. Inspection does not review Unread, answer Input requests or acknowledge stopped ownership. Do not send session content outside this task, and do not inspect credentials, tokens or personal agent profiles. ",
     "Do not start other watchers, schedulers or workflow-controller authority. Stop cancels this turn only: previously accepted OVRCR operations may finish, so never claim rollback and never replay an interrupted command. Pi compacts this same conversation automatically as context fills; there is no new-conversation action."
 );
 
@@ -324,6 +325,7 @@ fn run_turn(
             text,
             context,
             async_wakeup: true,
+            ..
         } => {
             let _ = (text, context);
             // `sendUserMessage` already started this exact Pi turn after the Server
@@ -334,6 +336,7 @@ fn run_turn(
             text,
             context,
             async_wakeup: false,
+            skill,
         } => {
             let (model, context_window) =
                 resolve_model(connection, journal, state, turn.model.as_deref())?;
@@ -346,7 +349,7 @@ fn run_turn(
                 return Err(Failure::Terminated);
             }
             journal.commit(OperatorWorkerEvent::ReasoningSelected(reasoning))?;
-            let prompt = prompt_text(text, context)?;
+            let prompt = prompt_text(text, context, skill.as_ref(), &paths.profile)?;
             state.prompted = true;
             let response = connection.request(
                 journal,
@@ -1099,6 +1102,11 @@ impl Connection {
                 self.read_watch_status(state, &event)?;
             }
             Some("extension_ui_request")
+                if event["method"] == "confirm" && event["title"] == WATCH_PROTECTION_TITLE =>
+            {
+                self.protect_watches(journal, &event)?;
+            }
+            Some("extension_ui_request")
                 if !matches!(
                     event["method"].as_str(),
                     Some("confirm" | "select" | "input" | "editor")
@@ -1241,6 +1249,11 @@ impl Connection {
                 }
                 Some("extension_ui_request") if event["method"] == "setStatus" => Ok(None),
                 Some("extension_ui_request")
+                    if event["method"] == "confirm" && event["title"] == WATCH_PROTECTION_TITLE =>
+                {
+                    self.protect_watches(journal, &event).map(|()| None)
+                }
+                Some("extension_ui_request")
                     if event["method"] == "confirm" && event["title"] == WAKEUP_ADMISSION_TITLE =>
                 {
                     self.begin_async_wakeup(journal, state, &event)
@@ -1262,6 +1275,35 @@ impl Connection {
                 _ => Ok(None),
             },
         }
+    }
+
+    fn protect_watches(
+        &mut self,
+        journal: &mut Journal<'_>,
+        event: &Value,
+    ) -> std::result::Result<(), Failure> {
+        let dialog = event["id"]
+            .as_str()
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let update: ovrcr_protocol::OperatorWatchUpdate = event["message"]
+            .as_str()
+            .and_then(|message| serde_json::from_str(message).ok())
+            .ok_or(Failure::Failed(INTEGRATION_UNAVAILABLE))?;
+        let identity = OperatorRunIdentity {
+            conversation: journal.identity.conversation,
+            session: journal.identity.session,
+            run: journal.identity.run,
+        };
+        let result = journal.reporter.operator_set_watches(
+            identity,
+            update,
+            Instant::now() + REPORT_DEADLINE,
+        );
+        self.send(
+            &json!({"type": "extension_ui_response", "id": dialog, "confirmed": result.is_ok()}),
+        )
+        .map_err(|_| Failure::ReportFailed)?;
+        result.map_err(|_| Failure::ReportFailed)
     }
 
     fn begin_async_wakeup(
@@ -1575,6 +1617,7 @@ impl Connection {
         }
         if method == "confirm" {
             match event["title"].as_str() {
+                Some(WATCH_PROTECTION_TITLE) => return self.protect_watches(journal, event),
                 Some(WAKEUP_ADMISSION_TITLE) => {
                     // A stale or concurrent pre-send dialog can surface while a
                     // real turn already owns the Pi session. Refuse it safely;
@@ -2386,12 +2429,30 @@ fn clean_stream_end(error: &pi::PiError) -> bool {
 fn prompt_text(
     text: &str,
     context: &ovrcr_protocol::OperatorContext,
+    selection: Option<&ovrcr_protocol::OperatorSkillSelection>,
+    profile: &Path,
 ) -> std::result::Result<String, Failure> {
     let context = serde_json::to_string(context).map_err(|_| Failure::Failed(REQUEST_FAILED))?;
-    // The captured context is always ahead of the user text so input such as `/new`
-    // cannot become a native pi command.
+    // Never forward native commands. The binary's fixed bundle, not mutable disk
+    // contents or arbitrary request text, supplies explicit instructions.
+    let instructions = if let Some(selection) = selection {
+        let skill = selection.resolve().map_err(|_| {
+            Failure::Failed(
+                "Selected Operator skill is unavailable or incompatible; no prompt was sent.",
+            )
+        })?;
+        format!(
+            "Selected Operator skill: {} (revision {})\nReference location: {}\nResolve supporting paths relative to this document's directory. Follow its normal workflow; ask for missing required information. Selection grants no additional tools or authority.\n\n{}\n\n",
+            skill.name,
+            skill.revision,
+            profile.join(skill.name).join("SKILL.md").display(),
+            skill.document
+        )
+    } else {
+        String::new()
+    };
     Ok(format!(
-        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\nUser request:\n{text}"
+        "Captured OVRCR context (identities are fixed for this turn):\n{context}\n\n{instructions}User request:\n{text}"
     ))
 }
 
@@ -3749,7 +3810,13 @@ mod tests {
 
     #[test]
     fn prompt_text_always_keeps_the_context_ahead_of_user_text() {
-        let prompt = prompt_text("/new", &ovrcr_protocol::OperatorContext::default()).unwrap();
+        let prompt = prompt_text(
+            "/new",
+            &ovrcr_protocol::OperatorContext::default(),
+            None,
+            Path::new("/private/profile"),
+        )
+        .unwrap();
         assert!(prompt.starts_with("Captured OVRCR context"));
         assert!(prompt.ends_with("User request:\n/new"));
     }

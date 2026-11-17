@@ -145,6 +145,14 @@ try {
   const statuses = [];
   const sentMessages = [];
   const confirmations = [];
+  const protections = [];
+  let loseProtectionAck = false;
+  const confirmProtection = (title, value) => {
+    if (title !== "OVRCR Operator watch protection") return false;
+    protections.push(JSON.parse(value));
+    if (loseProtectionAck) throw new Error("lost protection acknowledgement");
+    return true;
+  };
   let idle = false;
   let admitWakeup = false;
   const extensionCtx = {
@@ -153,6 +161,7 @@ try {
         statuses.push([key, JSON.parse(value)]);
       },
       async confirm(title, value) {
+        if (confirmProtection(title, value)) return true;
         confirmations.push([title, JSON.parse(value)]);
         return admitWakeup;
       },
@@ -190,6 +199,7 @@ try {
           statuses.push([key, JSON.parse(value)]);
         },
         async confirm(title, value) {
+          if (confirmProtection(title, value)) return true;
           confirmations.push([title, JSON.parse(value)]);
           return admitWakeup;
         },
@@ -248,6 +258,8 @@ try {
   // watch_sessions validates a managed Workspace target, reports the active
   // lease, and exposes the same state through list.
   await handlers.get("session_start")({ type: "session_start" }, extensionCtx);
+  assert.deepEqual(protections.at(-1), { revision: 1, targets: [] },
+    "complete watch protection is acknowledged before startup becomes ready");
   const watcher = tools.get("watch_sessions");
   const add = await watcher.execute(
     "watch-add",
@@ -524,6 +536,50 @@ try {
     extensionCtx,
   );
 
+  // An already observed replacement is reported once for the old baseline,
+  // without registering protection for either the obsolete or replacement run.
+  const staleInput = { action: "add", sessions: [{ session_id: 41,
+    baseline: { run: 6, activity_revision: 3, unread_turn: "turn-5" } }] };
+  await watcher.execute("stale-run-catchup", staleInput, undefined, undefined, extensionCtx);
+  const staleReport = JSON.parse((await watcher.execute("stale-list", { action: "list" }, undefined, undefined, extensionCtx)).content[0].text);
+  assert.equal(staleReport.pending_reports[0].reason, "run_changed");
+  assert.equal(staleReport.pending_reports[0].watched_run, 6);
+  assert.equal(staleReport.pending_reports[0].run, 7);
+  assert.deepEqual(protections.at(-1).targets, []);
+  await assert.rejects(watcher.execute("stale-duplicate", staleInput, undefined, undefined, extensionCtx), /already watched/);
+  idle = true;
+  admitWakeup = true;
+  await handlers.get("agent_settled")({}, extensionCtx);
+  await handlers.get("agent_start")({}, extensionCtx);
+  await handlers.get("agent_settled")({}, extensionCtx);
+  assert.equal(sentMessages.length, 1, "old-baseline catch-up delivered exactly once");
+  assert.match(sentMessages[0], /run_changed/);
+  sentMessages.length = 0;
+  confirmations.length = 0;
+  idle = false;
+  admitWakeup = false;
+
+  sessions[0] = { ...sessions[0], activity: "busy" };
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  await watcher.execute("register-before-change", { action: "add", sessions: [{ session_id: 41,
+    baseline: { run: 7, activity_revision: 4, unread_turn: "turn-5" } }] }, undefined, undefined, extensionCtx);
+  sessions[0] = { ...sessions[0], run: 8 };
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  const beforeRunChange = statuses.length;
+  await waitUntil(() => statuses.length > beforeRunChange, "registered run-change report");
+  const registeredReport = JSON.parse((await watcher.execute("changed-list", { action: "list" }, undefined, undefined, extensionCtx)).content[0].text);
+  assert.equal(registeredReport.pending_reports[0].watched_run, 7);
+  assert.deepEqual(protections.at(-1).targets, [{ session: 41, run: 7 }], "existing protection survives pending delivery after run change");
+  await watcher.execute("clear-registered", { action: "remove", all: true }, undefined, undefined, extensionCtx);
+  sessions[0] = { ...sessions[0], run: 7, archived: true };
+  writeFileSync(sessionsPath, JSON.stringify(sessions));
+  const beforeInvalid = protections.length;
+  await assert.rejects(watcher.execute("archived-not-catchup", staleInput, undefined, undefined, extensionCtx), /not a reported Workspace Agent/);
+  await assert.rejects(watcher.execute("missing-not-catchup", { action: "add", sessions: [{ session_id: 999,
+    baseline: { run: 6, activity_revision: 3, unread_turn: null } }] }, undefined, undefined, extensionCtx), /not a reported Workspace Agent/);
+  assert.equal(protections.length, beforeInvalid);
+  delete sessions[0].archived;
+
   // Reporter unread turn ids are opaque strings, often UUIDs; a changed
   // non-null identity settles even when activity_revision is unchanged.
   sessions[0] = {
@@ -563,13 +619,13 @@ try {
     extensionCtx,
   );
 
-  const waitUntil = async (predicate, label) => {
+  async function waitUntil(predicate, label) {
     const until = Date.now() + 4000;
     while (!predicate()) {
       if (Date.now() >= until) throw new Error(label + " timed out");
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-  };
+  }
   // A delayed old CLI sample cannot settle a replacement watch for the same
   // session after remove/re-add captures a newer baseline.
   sessions[0] = {
@@ -847,6 +903,17 @@ try {
   assert.equal(clean.active, 0);
   assert.deepEqual(clean.watches, []);
   assert.deepEqual(clean.pending_reports, []);
+  loseProtectionAck = true;
+  await assert.rejects(fresh.tools.get("watch_sessions").execute("lost-ack", {
+    action: "add", sessions: [{ session_id: 44, baseline: { run: 5, activity_revision: 1, unread_turn: null } }],
+  }, undefined, undefined, fresh.context), /lost protection acknowledgement/);
+  const uncertainUpdate = protections.at(-1);
+  assert.deepEqual(uncertainUpdate.targets, [{ session: 44, run: 5 }]);
+  loseProtectionAck = false;
+  await assert.rejects(fresh.tools.get("watch_sessions").execute("after-lost-ack", {
+    action: "remove", all: true,
+  }, undefined, undefined, fresh.context), /protection unresolved/);
+  assert.equal(protections.at(-1), uncertainUpdate, "lost add cannot be overwritten by a conflicting removal");
   idle = false;
   admitWakeup = false;
 

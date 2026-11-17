@@ -648,6 +648,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     },
                                     model: None,
                                     submission: OperatorWorkerSubmission::Prompt {
+                                        skill: None,
                                         text: "prompt".into(),
                                         context: Default::default(),
                                         async_wakeup: false,
@@ -669,6 +670,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     identity: wrong_session,
                                     model: None,
                                     submission: OperatorWorkerSubmission::Prompt {
+                                        skill: None,
                                         text: "prompt".into(),
                                         context: Default::default(),
                                         async_wakeup: false,
@@ -692,6 +694,7 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     identity,
                                     model: None,
                                     submission: OperatorWorkerSubmission::Prompt {
+                                        skill: None,
                                         text,
                                         context: Default::default(),
                                         async_wakeup,
@@ -700,6 +703,9 @@ fn operator_fences_bootstraps_and_validates_exact_journal_receipts() {
                                     tree_target_id: None,
                                 }),
                             )))
+                        }
+                        OperatorWorkerCommand::SetWatches { .. } => {
+                            panic!("unexpected watch update")
                         }
                         OperatorWorkerCommand::AbortTurn { .. } => Response::Error {
                             code: ovrcr_protocol::ErrorCode::Conflict,

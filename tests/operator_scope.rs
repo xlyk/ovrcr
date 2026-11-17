@@ -201,6 +201,24 @@ fn legacy_operator_rows_refuse_lifecycle_but_keep_exact_run_acknowledgement() {
             "{request:?} must be refused for a legacy Operator row, got {response:?}"
         );
     }
+    for action in [
+        ovrcr::protocol::SessionControlAction::Pause,
+        ovrcr::protocol::SessionControlAction::Resume,
+        ovrcr::protocol::SessionControlAction::Stop,
+        ovrcr::protocol::SessionControlAction::Reopen,
+    ] {
+        assert!(matches!(
+            live.request(Request::ControlSession {
+                session: opened.session,
+                expected_run: turned.identity.run,
+                action,
+            }),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+    }
     assert!(
         registry.conversation_ids().contains(&opened.id.0),
         "refused routes preserve the legacy row"

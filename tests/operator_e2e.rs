@@ -1725,6 +1725,7 @@ fn stale_run_submits_and_terminal_lifecycle_routes_are_refused() {
 
     // A stale observed run cannot submit again.
     let response = client.exchange(Request::Operator(OperatorRequest::Submit {
+        skill: None,
         conversation: opened.id,
         expected_run: opened.run,
         text: "stale".into(),
@@ -3944,8 +3945,8 @@ mod installed_pi {
     use operator_provider::{Chunk, Plan, Provider};
     use ovrcr::protocol::{
         self, ClientMessage, OperatorConversationId, OperatorHistory, OperatorMessageContent,
-        OperatorToolStatus, OperatorTurnState, OperatorWorkerEvent, Request, Response,
-        ServerMessage, SessionPhase, TerminalSize,
+        OperatorRequest, OperatorToolStatus, OperatorTurnState, OperatorWorkerEvent, Request,
+        Response, ServerMessage, SessionPhase, TerminalSize,
     };
     use ovrcr::tui::{Dashboard, Settings};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
@@ -3964,6 +3965,10 @@ mod installed_pi {
         time::{Duration, Instant},
     };
 
+    mod cleanup {
+        include!("fixtures/operator-pi/cleanup.rs");
+    }
+
     const BUDGET: Duration = Duration::from_secs(30);
     /// The same source file the compiled Operator bundles into its system prompt.
     const BUNDLED_SKILL: &str = include_str!("../.agents/skills/ovrcr/SKILL.md");
@@ -3971,6 +3976,15 @@ mod installed_pi {
     /// even though the fixture HOME contains it.
     const PERSONAL_SKILL_SENTINEL: &str = "PERSONAL_SKILL_MUST_NOT_LOAD_6f4a1";
     const COMPACTION_CONTEXT_WINDOW: u64 = 12_288;
+    const STATUS_WATCH_REQUEST: &str = "Watch status-ready without sending it work.";
+    const STATUS_UNWATCH_REQUEST: &str = "Stop watching status-ready; leave it running.";
+    const CARE_REQUEST: &str = "Diagnose session ";
+    const STATUS_REQUEST: &str = "What needs attention across OVRCR?";
+    const STATUS_PROJECT_REQUEST: &str = "Show status only for Project fixture.";
+    const STATUS_WORKSPACE_REQUEST: &str =
+        "Show status only for Workspace status-work in Project fixture.";
+    const STATUS_SESSION_REQUEST: &str =
+        "Show status only for the status-ready session in Project fixture.";
 
     /// Inherited provider/session credentials the launcher must strip before
     /// Pi — and therefore before the admitted Bash child — sees them. Every
@@ -4621,6 +4635,7 @@ mod installed_pi {
         for instruction in [
             "Use the read tool to load a skill's file when the task matches its description.",
             "Use the bundled coordinator skill for multi-session work.",
+            "Status overviews default to all registered Projects in this instance",
             "watch_sessions only to add, list, or remove bounded watches",
             "opaque unread.turn (string or null)",
             "Claude Code and Codex via terminal transcript --json",
@@ -4641,6 +4656,37 @@ mod installed_pi {
             ),
             "{label}: Pi omitted the coordinator skill description"
         );
+        assert!(
+            system.contains("<name>ovrcr-status</name>"),
+            "{label}: status was not advertised"
+        );
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-status/SKILL.md").display()
+        )));
+        assert!(system.contains("<name>ovrcr-workspaces</name>"));
+        assert!(system.contains("<description>Inspect or register Projects, create or reuse Git Workspaces, and launch requested Terminals or managed Agents with verified readiness.</description>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-workspaces/SKILL.md").display()
+        )));
+        assert_eq!(
+            system.matches("<name>ovrcr-").count(),
+            5,
+            "only implemented skills are advertised"
+        );
+        assert!(system.contains("<name>ovrcr-session-care</name>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-session-care/SKILL.md").display()
+        )));
+        assert!(system.contains("<name>ovrcr-cleanup</name>"));
+        assert!(system.contains(&format!(
+            "<location>{}</location>",
+            operator_profile.join("ovrcr-cleanup/SKILL.md").display()
+        )));
+        assert!(!system.contains("unregistered-sentinel"));
+        assert!(!system.contains("project-sentinel"));
         let coordinator_skill = operator_profile.join("ovrcr-coordinator/SKILL.md");
         assert!(
             system.contains(&format!(
@@ -5039,6 +5085,8 @@ mod installed_pi {
         inflate_compaction_turn: bool,
         /// Script the private local-provider Operator coordinator walkthrough.
         coordinator: bool,
+        /// Provision only in fixtures that explicitly own their HOME/repo.
+        workspaces: bool,
     }
 
     /// Scripted operator/tool scenario shared by the installed-pi test and the
@@ -5085,7 +5133,75 @@ mod installed_pi {
                 };
             }
             let user = operator_provider::last_user_text(body);
+            if user
+                .split("User request:\n")
+                .last()
+                .is_some_and(|request| request.starts_with("Workspace cleanup "))
+            {
+                let mut counters = counters.lock().unwrap();
+                let step = counters.entry("workspace-cleanup".into()).or_default();
+                let plan = cleanup::workspace_plan(body, *step);
+                *step += 1;
+                return plan;
+            }
+            if user == "CLEANUP_TASK_HOLD" {
+                return Plan::text("Task remains active during preview").holding();
+            }
+            if user.split("User request:\n").last().is_some_and(|request| {
+                request.starts_with("Preview cleanup")
+                    || request.starts_with("Approve cleanup archive ")
+                    || request.starts_with("Catchup cleanup ")
+            }) {
+                let mut counters = counters.lock().unwrap();
+                let key = if user
+                    .split("User request:\n")
+                    .last()
+                    .unwrap()
+                    .starts_with("Approve cleanup archive ")
+                {
+                    "cleanup-archive"
+                } else if user
+                    .split("User request:\n")
+                    .last()
+                    .unwrap()
+                    .starts_with("Catchup cleanup ")
+                {
+                    "cleanup-catchup"
+                } else {
+                    "cleanup-preview"
+                };
+                let step = counters.entry(key.into()).or_default();
+                let plan = cleanup::plan(body, *step);
+                *step += 1;
+                return plan;
+            }
+            if user.starts_with("WORKSPACES_AGENT_PROBE:") {
+                return Plan::text(
+                    "WORKSPACES_AGENT_RESPONSE: managed Pi received the requested probe.",
+                );
+            }
+            if mode.workspaces
+                && let Some(request) = user.split("User request:\n").last()
+                && let Some(action) = request
+                    .strip_prefix("WORKSPACES_")
+                    .and_then(|text| text.split(':').next())
+            {
+                let mut counters = counters.lock().unwrap();
+                let step = counters.entry(format!("workspaces-{action}")).or_default();
+                let plan = workspaces_plan(body, action, *step % 3);
+                *step += 1;
+                return plan;
+            }
             let key = [
+                "Control exact session",
+                "CARE_NATIVE_SEED",
+                CARE_REQUEST,
+                STATUS_REQUEST,
+                STATUS_WATCH_REQUEST,
+                STATUS_UNWATCH_REQUEST,
+                STATUS_PROJECT_REQUEST,
+                STATUS_WORKSPACE_REQUEST,
+                STATUS_SESSION_REQUEST,
                 "REQUEST_ONE_REAL_TOOLS",
                 "REQUEST_TWO_RESUME",
                 "REQUEST_THREE_HELD",
@@ -5108,6 +5224,7 @@ mod installed_pi {
                 "COMPACT_ONE",
                 "COMPACT_TWO",
                 "GUI_SLASH_SEED",
+                "GUI_SKILLS_REQUEST",
                 "GUI_BRANCH_ALPHA",
                 "GUI_BRANCH_BETA",
             ]
@@ -5124,6 +5241,27 @@ mod installed_pi {
             let marker_text = marker.display().to_string();
             let workspace_text = workspace.display().to_string();
             match (key.as_str(), step) {
+                ("Control exact session", _) => session_control_plan(body, step),
+                ("CARE_NATIVE_SEED", _) => Plan::text("CARE_NATIVE_HISTORY_PRESERVED"),
+                (CARE_REQUEST, _) => session_care_plan(body, step),
+                (STATUS_REQUEST | STATUS_PROJECT_REQUEST | STATUS_WORKSPACE_REQUEST | STATUS_SESSION_REQUEST, _) => status_plan(body, &key, step),
+                (STATUS_WATCH_REQUEST, 0) => {
+                    let system = operator_provider::system_text(body);
+                    let path = system.split("<name>ovrcr-coordinator</name>").nth(1).unwrap().split("<location>").nth(1).unwrap().split("</location>").next().unwrap();
+                    Plan::tool("watch-instructions", "read", json!({"path": path}))
+                }
+                (STATUS_WATCH_REQUEST, 1) => {
+                    assert!(operator_provider::tool_result_texts(body).join("\n").contains("Removing a watch does not"));
+                    Plan::tool("watch-baseline", "bash", json!({"command": "printf 'WATCH_ROWS='; \"$OVRCR_EXECUTABLE\" --json terminal list"}))
+                }
+                (STATUS_WATCH_REQUEST, 2) => {
+                    let rows = marked_tool_json(body, "WATCH_ROWS=");
+                    let row = rows.as_array().unwrap().iter().find(|row| row["name"] == "status-ready").unwrap();
+                    Plan::tool("watch-add", "watch_sessions", json!({"action": "add", "sessions": [{"session_id": row["id"], "project": row["project"], "label": row["name"], "baseline": {"run": row["run"], "activity_revision": row["agent"]["activity_revision"], "unread_turn": row["unread"]["turn"]}}]}))
+                }
+                (STATUS_WATCH_REQUEST, _) => Plan::text("Watching status-ready; no input sent."),
+                (STATUS_UNWATCH_REQUEST, 0) => Plan::tool("watch-remove", "watch_sessions", json!({"action": "remove", "all": true})),
+                (STATUS_UNWATCH_REQUEST, _) => Plan::text("Watch removed; session left running."),
                 ("REQUEST_ONE_REAL_TOOLS", 0) => Plan::tool(
                     "call-write",
                     "write",
@@ -5376,6 +5514,11 @@ mod installed_pi {
                 }
                 ("COMPACT_ONE", 0) => Plan::text("COMPACT_ONE_DONE"),
                 ("COMPACT_TWO", 0) => Plan::text("COMPACT_TWO_DONE"),
+                ("GUI_SKILLS_REQUEST", _) => {
+                    assert!(user.contains("Selected Operator skill: ovrcr-status"));
+                    assert!(user.contains(include_str!("../pi/skills/ovrcr-status/SKILL.md")));
+                    Plan::text("SKILLS_PICKER_DONE: selected status instructions and captured target received.")
+                }
                 ("GUI_SLASH_SEED", _) => Plan::text(
                     "Seeded root turn for Operator slash commands.\n\n- Protocol version: `88`\n- Registry schema: `35`",
                 ),
@@ -5472,6 +5615,501 @@ table = [
 print("OVRCR_WATCH_INPUT=" + json.dumps(watch, separators=(",", ":")))
 print("OVRCR_SESSION_TABLE=" + json.dumps(table, separators=(",", ":")))
 PY"#
+    }
+
+    fn workspaces_plan(body: &Value, action: &str, step: usize) -> Plan {
+        let system = operator_provider::system_text(body);
+        let location = system
+            .split("<name>ovrcr-workspaces</name>")
+            .nth(1)
+            .and_then(|tail| tail.split("<location>").nth(1))
+            .and_then(|tail| tail.split("</location>").next())
+            .expect("Pi must advertise the shipped Workspace procedure");
+        match step {
+            0 => {
+                assert!(
+                    !system.contains("Read the repository's default branch and pass that name."),
+                    "the shared guide must not override the explicit-base requirement"
+                );
+                assert!(!system.contains("Registration creates the protected root workspace on the detected default branch."), "registration must not promise a Root branch switch");
+                Plan::tool("workspaces-instructions", "read", json!({"path": location}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                for required in [
+                    "Inspection alone neither registers",
+                    "user's explicit base",
+                    "ask which path",
+                    "Leave it unanswered",
+                    "Process creation",
+                ] {
+                    assert!(
+                        instructions.contains(required),
+                        "missing Workspace procedure: {required}"
+                    );
+                }
+                assert!(
+                    [
+                        "inspect",
+                        "missing-base",
+                        "provision",
+                        "reuse",
+                        "terminal",
+                        "agent",
+                        "ambiguous",
+                        "detached",
+                        "root",
+                        "trust"
+                    ]
+                    .contains(&action)
+                );
+                Plan::tool(
+                    "workspaces-cli",
+                    "bash",
+                    json!({"command": format!("python3 - {action} <<'PY'\n{}\nPY", include_str!("fixtures/operator-pi/workspaces.py"))}),
+                )
+            }
+            _ => {
+                let result = marked_tool_json(body, "WORKSPACES_RESULT=");
+                let detail = match action {
+                    "inspect" => format!(
+                        "Inspection only: repository {} on {}. No registration or launch.",
+                        result["repo"], result["branch"]
+                    ),
+                    "missing-base" => format!(
+                        "Which explicit base branch or commit should the new branch use? CLI refused: {}",
+                        result["refusal"]
+                    ),
+                    "ambiguous" => format!(
+                        "Which exact Workspace path should I use? Candidates: {}. Refused: {}",
+                        result["candidates"], result["refusal"]
+                    ),
+                    "detached" => format!(
+                        "Confirm whether detached checkout {} at HEAD {} is intended; no launch. {}",
+                        result["workspace"]["path"], result["head"], result["refusal"]
+                    ),
+                    "root" => format!(
+                        "Root launch refused on {}; Root left unchanged. {}",
+                        result["branch"], result["refusal"]
+                    ),
+                    "trust" => format!(
+                        "Running but not a verified Agent: session {} run {} requires a human decision. Left unanswered: {}",
+                        result["session"]["id"], result["session"]["run"], result["screen"]
+                    ),
+                    "agent" | "terminal" => format!(
+                        "Verified requested {action}: session {} run {} in {}. Observed: {}",
+                        result["session"]["id"],
+                        result["session"]["run"],
+                        result["session"]["cwd"],
+                        result["screen"]
+                    ),
+                    _ => format!(
+                        "{} Workspace: {}",
+                        if action == "reuse" {
+                            "Reused"
+                        } else {
+                            "Created"
+                        },
+                        result["workspace"]
+                    ),
+                };
+                Plan::text(&format!(
+                    "Scope: requested repository / Project fixture. {detail}"
+                ))
+            }
+        }
+    }
+
+    // Controlled model responses exercise native reads and the matching-instance
+    // CLI. Reports are derived from its real tool result, never a canned success.
+    fn status_plan(body: &Value, request: &str, step: usize) -> Plan {
+        let system = operator_provider::system_text(body);
+        let location = system
+            .split("<name>ovrcr-status</name>")
+            .nth(1)
+            .and_then(|tail| tail.split("<location>").nth(1))
+            .and_then(|tail| tail.split("</location>").next())
+            .expect("Pi must advertise status before the first model request");
+        let document = Path::new(location);
+        match step % 4 {
+            0 => Plan::tool("status-instructions", "read", json!({"path": document})),
+            1 => {
+                let results = operator_provider::tool_result_texts(body).join("\n");
+                assert!(results.contains("Default to all registered Projects"));
+                assert!(results.contains("references/inventory.md"));
+                Plan::tool(
+                    "status-reference",
+                    "read",
+                    json!({"path": document.parent().unwrap().join("references/inventory.md")}),
+                )
+            }
+            2 => {
+                assert!(
+                    operator_provider::tool_result_texts(body)
+                        .join("\n")
+                        .contains("used/50")
+                );
+                let project = if request == STATUS_REQUEST {
+                    ""
+                } else {
+                    ", '--project', 'fixture'"
+                };
+                Plan::tool(
+                    "status-inventory",
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\ncli = os.environ['OVRCR_EXECUTABLE']\ndef get(*args):\n    return json.loads(subprocess.check_output([cli, '--json', *args], text=True))\nprint('STATUS_INVENTORY=' + json.dumps(dict(executable=cli, instance=os.environ['OVRCR_HOME'], projects=get('project', 'list'), workspaces=get('workspace', 'list'{project}), sessions=get('terminal', 'list'))))\nPY"
+                    )}),
+                )
+            }
+            _ => {
+                let inventory = marked_tool_json(body, "STATUS_INVENTORY=");
+                let all = inventory["sessions"].as_array().unwrap();
+                let live = all
+                    .iter()
+                    .filter(|row| {
+                        row["scope"] == "Workspace"
+                            && matches!(row["phase"].as_str(), Some("running" | "paused"))
+                    })
+                    .count();
+                let rows: Vec<_> = all
+                    .iter()
+                    .filter(|row| row["scope"] == "Workspace")
+                    .filter(|row| request == STATUS_REQUEST || row["project"] == "fixture")
+                    .filter(|row| {
+                        request != STATUS_WORKSPACE_REQUEST || row["workspace"] == "status-work"
+                    })
+                    .filter(|row| {
+                        request != STATUS_SESSION_REQUEST || row["name"] == "status-ready"
+                    })
+                    .collect();
+                let scope = match request {
+                    STATUS_PROJECT_REQUEST => "Project fixture",
+                    STATUS_WORKSPACE_REQUEST => "Workspace status-work in Project fixture",
+                    STATUS_SESSION_REQUEST => "session status-ready in Project fixture",
+                    _ => "all registered Projects in this instance",
+                };
+                let projects = inventory["projects"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| request == STATUS_REQUEST || row["name"] == "fixture")
+                    .map(|row| row["name"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                let workspaces = inventory["workspaces"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|row| {
+                        request != STATUS_WORKSPACE_REQUEST || row["branch"] == "status-work"
+                    })
+                    .filter(|row| {
+                        request != STATUS_SESSION_REQUEST
+                            || rows.iter().any(|session| session["cwd"] == row["path"])
+                    })
+                    .count();
+                let mut text = format!(
+                    "Scope: {scope}. Projects: {}. Workspaces: {workspaces}. Sessions: {}.\nInstance live Workspace capacity: {live}/50; {} remaining. Operator: separate slot.\n",
+                    projects.join(", "),
+                    rows.len(),
+                    50 - live
+                );
+                for row in rows {
+                    let activity = if row["kind"] == "terminal" {
+                        "Terminal; no Agent reporting"
+                    } else if row["reporting_unavailable"] == true || row["agent"].is_null() {
+                        "unavailable reporting; activity unknown"
+                    } else {
+                        row["activity"].as_str().unwrap()
+                    };
+                    text.push_str(&format!(
+                        "Session {} ({}): {activity}{}\n",
+                        row["id"],
+                        row["name"].as_str().unwrap(),
+                        if row["unread"].is_object() {
+                            "; Unread result needs review"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                text.push_str("Inspection only; resources, Unread and Input requests unchanged.");
+                Plan::text(&text)
+            }
+        }
+    }
+
+    // Also usable by the native GUI helper: "Control exact session ID RUN ACTION".
+    fn session_control_plan(body: &Value, step: usize) -> Plan {
+        let user = operator_provider::last_user_text(body);
+        let mut words = user
+            .split("Control exact session ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace();
+        let id: u64 = words.next().unwrap().parse().unwrap();
+        let run: u64 = words.next().unwrap().parse().unwrap();
+        let action = words.next().unwrap();
+        assert!(["pause", "resume", "stop", "reopen", "close"].contains(&action));
+        let call = format!("control-{step}");
+        match step % 5 {
+            0 => {
+                let system = operator_provider::system_text(body);
+                let path = system
+                    .split("<name>ovrcr-session-care</name>")
+                    .nth(1)
+                    .unwrap()
+                    .split("<location>")
+                    .nth(1)
+                    .unwrap()
+                    .split("</location>")
+                    .next()
+                    .unwrap();
+                Plan::tool(&call, "read", json!({"path": path}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                assert!(instructions.contains("--expected-run RUN"));
+                assert!(instructions.contains("controlled-stop"));
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": "printf 'CONTROL_BEFORE='; \"$OVRCR_EXECUTABLE\" --json terminal list"}),
+                )
+            }
+            2 => {
+                let rows = marked_tool_json(body, "CONTROL_BEFORE=");
+                let row = rows
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["id"] == id)
+                    .unwrap();
+                assert_eq!(row["scope"], "Workspace");
+                // Keep the requested run even if inventory has changed; Server is the fence.
+                let command = match action {
+                    "stop" => "'kill'",
+                    "reopen" => "'terminal', 'reopen'",
+                    "close" => "'terminal', 'close'",
+                    "pause" => "'pause'",
+                    _ => "'resume'",
+                };
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\np = subprocess.run([os.environ['OVRCR_EXECUTABLE'], '--json', {command}, '{id}', '--expected-run', '{run}'], text=True, capture_output=True)\nprint('CONTROL_RESULT=' + json.dumps(dict(code=p.returncode, output=p.stdout, error=p.stderr, instance=os.environ['OVRCR_HOME'], executable=os.environ['OVRCR_EXECUTABLE'])))\nPY"
+                    )}),
+                )
+            }
+            3 => Plan::tool(
+                &call,
+                "bash",
+                json!({"command": format!(
+                    "printf 'CONTROL_AFTER='; \"$OVRCR_EXECUTABLE\" --json terminal list{}",
+                    if action == "close" { " --archived" } else { "" }
+                )}),
+            ),
+            _ => {
+                let result = marked_tool_json(body, "CONTROL_RESULT=");
+                let rows = marked_tool_json(body, "CONTROL_AFTER=");
+                let row = rows.as_array().unwrap().iter().find(|r| r["id"] == id);
+                Plan::text(&format!(
+                    "Session {id} requested run {run}: {action}; CLI exit {}. Observed: {}. {}",
+                    result["code"],
+                    row.unwrap_or(&Value::Null),
+                    result["error"]
+                ))
+            }
+        }
+    }
+
+    // Controlled provider: drive the shipped procedure with actual CLI results,
+    // not a canned diagnosis. This does not test unconstrained model inference.
+    fn session_care_plan(body: &Value, step: usize) -> Plan {
+        let user = operator_provider::last_user_text(body);
+        let id: u64 = user
+            .split(CARE_REQUEST)
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let call = format!("care-{step}");
+        match step % 5 {
+            0 => {
+                let system = operator_provider::system_text(body);
+                let path = system
+                    .split("<name>ovrcr-session-care</name>")
+                    .nth(1)
+                    .expect("session care must be advertised")
+                    .split("<location>")
+                    .nth(1)
+                    .unwrap()
+                    .split("</location>")
+                    .next()
+                    .unwrap();
+                Plan::tool(&call, "read", json!({"path": path}))
+            }
+            1 => {
+                let instructions = operator_provider::tool_result_texts(body).join("\n");
+                for required in [
+                    "Known",
+                    "Unknown",
+                    "Next supported action",
+                    "recovery.requires_ack",
+                    "Read-only boundary",
+                    "terminal transcript ID",
+                    "terminal screen ID",
+                ] {
+                    assert!(
+                        instructions.contains(required),
+                        "missing diagnosis instruction: {required}"
+                    );
+                }
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\ncli = os.environ['OVRCR_EXECUTABLE']\ndef get(*args):\n    return json.loads(subprocess.check_output([cli, '--json', *args], text=True))\nrow = next(r for r in get('terminal', 'list') if r['id'] == {id})\nprojects = get('project', 'list')\nworkspaces = get('workspace', 'list', '--project', row['project'])\nworkspace = next(w for w in workspaces if w['path'] == row['cwd'])\nassert any(p['name'] == row['project'] for p in projects)\nprint('CARE_INVENTORY=' + json.dumps(dict(instance=os.environ['OVRCR_HOME'], executable=cli, workspace=workspace, session=row)))\nPY"
+                    )}),
+                )
+            }
+            2 => {
+                let row = marked_tool_json(body, "CARE_INVENTORY=")["session"].clone();
+                let provider = row["agent"]["binding"]["provider"].as_str().unwrap_or("");
+                eprintln!(
+                    "CARE_READ_SELECTION id={id} observed={} provider={provider}",
+                    row["id"]
+                );
+                let command = if matches!(provider, "Codex" | "Claude") {
+                    "transcript"
+                } else if provider == "Omp" {
+                    "screen"
+                } else {
+                    "read"
+                };
+                let bounds = match command {
+                    "screen" => ", '--rows', '2', '--cols', '80'",
+                    "read" => ", '--max-lines', '40'",
+                    _ => "",
+                };
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\np = subprocess.run([os.environ['OVRCR_EXECUTABLE'], '--json', 'terminal', '{command}', '{id}'{bounds}], capture_output=True, text=True)\nprint('CARE_CONTENT=' + json.dumps(dict(session={id}, command='{command}', code=p.returncode, output=p.stdout, error=p.stderr)))\nPY"
+                    )}),
+                )
+            }
+            3 => {
+                let content = marked_tool_json(body, "CARE_CONTENT=");
+                assert_eq!(
+                    content["session"], id,
+                    "only this diagnosis's observation is evidence"
+                );
+                let fallback = content["command"] == "transcript"
+                    && (content["code"] != 0 || content["output"].as_str().unwrap().contains('…'));
+                Plan::tool(
+                    &call,
+                    "bash",
+                    json!({"command": format!(
+                        "python3 - <<'PY'\nimport json, os, subprocess\ncli = os.environ['OVRCR_EXECUTABLE']\nfallback = None\nif {fallback}:\n    p = subprocess.run([cli, '--json', 'terminal', 'read', '{id}', '--max-lines', '40'], capture_output=True, text=True)\n    fallback = dict(code=p.returncode, output=p.stdout, error=p.stderr)\nrows = json.loads(subprocess.check_output([cli, '--json', 'terminal', 'list'], text=True))\nprint('CARE_REFRESH=' + json.dumps(dict(session=next(r for r in rows if r['id'] == {id}), fallback=fallback)))\nPY",
+                        fallback = if fallback { "True" } else { "False" }
+                    )}),
+                )
+            }
+            _ => {
+                let inventory = marked_tool_json(body, "CARE_INVENTORY=");
+                let refreshed = marked_tool_json(body, "CARE_REFRESH=");
+                let row = &refreshed["session"];
+                // The native GUI helper can inspect real reporting sessions,
+                // whose metric age advances even without a state change.
+                for key in ["id", "run", "project", "cwd"] {
+                    assert_eq!(
+                        inventory["session"][key], row[key],
+                        "diagnosis target changed"
+                    );
+                }
+                assert_eq!(
+                    inventory["session"]["agent"]["binding"],
+                    row["agent"]["binding"]
+                );
+                assert_eq!(
+                    inventory["session"]["recovery"]["conversation"],
+                    row["recovery"]["conversation"]
+                );
+                let content = marked_tool_json(body, "CARE_CONTENT=");
+                let unavailable = row["reporting_unavailable"] == true || row["agent"].is_null();
+                let condition = if matches!(
+                    row["phase"].as_str(),
+                    Some("interrupted" | "exited" | "stopped" | "paused")
+                ) {
+                    row["phase"].as_str().unwrap()
+                } else if unavailable {
+                    "unavailable reporting; activity unknown"
+                } else {
+                    row["activity"].as_str().unwrap()
+                };
+                let evidence = if content["code"] == 0 {
+                    let parsed: Value =
+                        serde_json::from_str(content["output"].as_str().unwrap()).unwrap();
+                    let text = match content["command"].as_str().unwrap() {
+                        "transcript" => parsed["entries"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|entry| entry["Assistant"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        "read" => parsed["text"].as_str().unwrap().to_owned(),
+                        "screen" => parsed["rows"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .flat_map(|row| row["cells"].as_array().unwrap())
+                            .filter_map(|cell| cell["text"].as_str())
+                            .collect::<String>(),
+                        _ => unreachable!(),
+                    };
+                    text.trim().chars().take(180).collect::<String>()
+                } else {
+                    "unavailable".into()
+                };
+                let unknown = if content["code"] != 0 {
+                    "content unavailable"
+                } else if content["output"].as_str().unwrap().contains('…') {
+                    "transcript truncated; terminal tail is partial evidence"
+                } else {
+                    "task success not established"
+                };
+                let next = if row["recovery"]["requires_ack"] == true
+                    && !matches!(row["phase"].as_str(), Some("running" | "paused"))
+                {
+                    "human ownership verification required; no acknowledgement performed"
+                } else if condition == "waiting_input" {
+                    "human answer required; Input request unchanged"
+                } else if condition == "response_ready" {
+                    "review response; Unread unchanged"
+                } else if unavailable {
+                    "reporting/recovery needs explicit investigation"
+                } else {
+                    "wait or request a supported action explicitly"
+                };
+                Plan::text(&format!(
+                    "Scope: instance {}, Project {}, Workspace {} ({}), session {id}, run {}.\nKnown: {condition}. Exit code: {}. Recovery blocker: {}.\nObserved content: {evidence}.\nUnknown: {unknown}.\nNext supported action: {next}. Inspection only; no control or recovery performed.",
+                    inventory["instance"].as_str().unwrap(),
+                    row["project"].as_str().unwrap(),
+                    inventory["workspace"]["branch"].as_str().unwrap(),
+                    inventory["workspace"]["id"],
+                    row["run"],
+                    row["exit_code"],
+                    row["recovery"]["unavailable"],
+                ))
+            }
+        }
     }
 
     fn marked_tool_json(body: &Value, prefix: &str) -> Value {
@@ -6207,6 +6845,7 @@ PY"#
                 hold_compaction: true,
                 inflate_compaction_turn: true,
                 coordinator: false,
+                workspaces: false,
             },
         ));
         provider.seed_profile_with(
@@ -6344,6 +6983,2018 @@ PY"#
                 .count(),
             requests.len()
         );
+    }
+
+    // A real PTY publishes only its own hook capability to a private fixture
+    // file, as in server_lifecycle's hook child. Keep the supervisor connection
+    // alive so inventory has stable Ready/Input/unavailable observations.
+    fn status_agent(live: &live::Live, name: &str) -> (ovrcr::protocol::SessionId, UnixStream) {
+        reporter_agent(live, name, ovrcr::protocol::AgentProvider::Codex)
+    }
+
+    fn reporter_agent(
+        live: &live::Live,
+        name: &str,
+        provider: ovrcr::protocol::AgentProvider,
+    ) -> (ovrcr::protocol::SessionId, UnixStream) {
+        use ovrcr::protocol::*;
+        let identity = live.root.path().join(format!("{name}.identity"));
+        let Response::CreatedSession(session) = live.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(), workspace: "work".into(), name: name.into(), label: None,
+            kind: SessionKind::Agent { name: provider.name().into() },
+            argv: vec!["/bin/sh".into(), "-c".into(), "umask 077; printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; printf 'Observed Agent screen: %s\\n' \"$2\"; while IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$1.input\"; [ \"$line\" != fixture-exit ] || exit 7; done".into(), "status-fixture".into(), identity.clone().into_os_string(), name.into()],
+        })) else { panic!("status Agent PTY creation failed") };
+        live.own_group(session.pid.unwrap() as libc::pid_t);
+        let deadline = Instant::now() + BUDGET;
+        let capability = loop {
+            if let Ok(token) = std::fs::read_to_string(&identity)
+                && token.len() == 64
+            {
+                break std::array::from_fn(|index| {
+                    u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).unwrap()
+                });
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fixture hook identity unavailable"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        let mut stream = protocol::connect_server(&live.socket).unwrap();
+        stream.set_read_timeout(Some(BUDGET)).unwrap();
+        let response = protocol::client::request(
+            &mut stream,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                session: session.id,
+                capability: AgentSecret(capability),
+                operation: format!("reserve-{name}"),
+                expected_epoch: 0,
+                pi_resume: None,
+                invocation: format!("invocation-{name}"),
+                provider,
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = response else {
+            panic!("reserve status reporter: {response:?}")
+        };
+        let response = protocol::client::request(
+            &mut stream,
+            2,
+            Request::Supervisor(SupervisorRequest {
+                auth: SupervisorAuth {
+                    session: session.id,
+                    lease: reservation.lease.clone(),
+                },
+                operation: format!("bind-{name}"),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: format!("conversation-{name}"),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = response else {
+            panic!("bind status reporter: {response:?}")
+        };
+        let observations = vec![
+            AgentObservation::Activity(ActivitySample {
+                state: AgentActivity::Busy,
+                quality: SampleQuality::Confirmed,
+                turn: Some("status-cycle".into()),
+            }),
+            match name {
+                "status-ready" | "care-transcript" => AgentObservation::Activity(ActivitySample {
+                    state: AgentActivity::ResponseReady,
+                    quality: SampleQuality::Confirmed,
+                    turn: Some("status-cycle".into()),
+                }),
+                "status-input" | "care-truncated" => AgentObservation::Input(vec![InputRequest {
+                    id: "question:status-fixture".into(),
+                    kind: InputKind::Input,
+                }]),
+                "status-unavailable" => AgentObservation::Health(HealthSample {
+                    state: ReporterHealth::Unavailable,
+                    reason: Some("fixture reporting disconnected".into()),
+                }),
+                "care-idle" | "care-omp" => AgentObservation::Activity(ActivitySample {
+                    state: AgentActivity::Idle,
+                    quality: SampleQuality::Confirmed,
+                    turn: Some("status-cycle".into()),
+                }),
+                "care-busy" | "care-interrupted" | "care-exited" | "care-missing" => {
+                    AgentObservation::Activity(ActivitySample {
+                        state: AgentActivity::Busy,
+                        quality: SampleQuality::Confirmed,
+                        turn: Some("status-cycle".into()),
+                    })
+                }
+                _ => panic!("unknown status fixture"),
+            },
+        ];
+        for (index, observation) in observations.into_iter().enumerate() {
+            let report = ProviderReport {
+                binding: binding.clone(),
+                revision: index as u64 + 1,
+                observation,
+            };
+            if matches!(report.observation, AgentObservation::Health(_)) {
+                let response = protocol::client::request(
+                    &mut stream,
+                    3,
+                    Request::Supervisor(SupervisorRequest {
+                        auth: SupervisorAuth {
+                            session: session.id,
+                            lease: reservation.lease.clone(),
+                        },
+                        operation: format!("health-{name}"),
+                        command: AgentCommand::Health(report),
+                    }),
+                )
+                .unwrap();
+                assert_eq!(
+                    response,
+                    Response::AgentOperation(AgentOperationResult::HealthUpdated)
+                );
+            } else {
+                assert_eq!(
+                    live.request(Request::AgentReport(AgentReport {
+                        session: session.id,
+                        capability,
+                        sequence: None,
+                        update: AgentUpdate::Provider(report),
+                    })),
+                    Response::Ok
+                );
+            }
+        }
+        if matches!(name, "care-transcript" | "care-truncated") {
+            let conversation = binding.conversation.clone();
+            let history = live.root.path().join(format!("{name}.jsonl"));
+            let text = if name == "care-truncated" {
+                format!(
+                    "Which deployment target? {}PRIVATE_CLIPPED_TAIL",
+                    "x".repeat(17_000)
+                )
+            } else {
+                "Diagnosis fixture reply: checks finished; review required.".into()
+            };
+            std::fs::write(&history, format!("{}\n{}\n",
+                json!({"type": "session_meta", "payload": {"id": conversation}}),
+                json!({"type": "event_msg", "payload": {"type": "agent_message", "message": text}}),
+            )).unwrap();
+            let retained = protocol::client::request(
+                &mut stream,
+                4,
+                Request::Supervisor(SupervisorRequest {
+                    auth: SupervisorAuth {
+                        session: session.id,
+                        lease: reservation.lease,
+                    },
+                    operation: format!("retain-{name}"),
+                    command: AgentCommand::RetainConversation {
+                        binding,
+                        reference: Box::new(ConversationReference::Codex(CodexConversation {
+                            conversation,
+                            executable: "/bin/sh".into(),
+                            history: Some(history),
+                            config_dir: live.root.path().to_owned(),
+                            options: vec![],
+                        })),
+                    },
+                }),
+            )
+            .unwrap();
+            assert_eq!(
+                retained,
+                Response::AgentOperation(AgentOperationResult::ConversationRetained)
+            );
+        }
+        (session.id, stream)
+    }
+
+    fn status_cli(live: &live::Live, args: &[&str]) -> Value {
+        let output = live.command().arg("--json").args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    fn workspaces_turn(
+        driver: &mut DashboardDriver,
+        live: &live::Live,
+        provider: &Provider,
+        action: &str,
+        request: &str,
+    ) -> (Value, String) {
+        driver.reopen();
+        driver.submit(&format!("WORKSPACES_{action}: {request}"));
+        let conversation = driver.conversation().id;
+        let history = wait_terminal(driver, conversation, provider, live);
+        wait_stopped(driver, conversation);
+        let turn = history
+            .conversation
+            .current_turn
+            .as_ref()
+            .unwrap()
+            .identity
+            .turn;
+        let outputs = tool_outputs_with_status(&history);
+        assert!(
+            outputs
+                .iter()
+                .all(|(_, _, status)| *status == OperatorToolStatus::Succeeded),
+            "{outputs:?}"
+        );
+        let answer: String = history
+            .messages
+            .iter()
+            .filter(|message| message.turn == turn)
+            .filter_map(|message| match &message.content {
+                OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            answer.contains("Scope: requested repository / Project fixture"),
+            "{answer}"
+        );
+        assert!(driver.screen().contains("Scope: requested repository"));
+        let result = marked_tool_json(
+            &provider.requests().last().unwrap().body,
+            "WORKSPACES_RESULT=",
+        );
+        assert_eq!(
+            result["executable"],
+            live.executable.to_string_lossy().as_ref()
+        );
+        assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+        (result, answer)
+    }
+
+    fn workspace_session_identities(rows: &Value) -> Vec<Value> {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                json!([
+                    row["id"],
+                    row["run"],
+                    row["cwd"],
+                    row["phase"],
+                    row["kind"],
+                    row["unread"]
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; explicit Workspace inspection through full/Quick"]
+    fn installed_pi_operator_workspaces_explicit_selection() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(scenario_handler_mode(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+                ScenarioMode {
+                    workspaces: true,
+                    ..ScenarioMode::default()
+                },
+            ));
+            provider.seed_profile(&live.config);
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            let request = "WORKSPACES_inspect: Inspect $HOME/repo only; do not register or launch.";
+            let input = format!("/skill:ovrcr-workspaces {request}");
+            if quick {
+                driver.quick(&input);
+            } else {
+                driver.open();
+                driver.submit(&input);
+            }
+            let conversation = driver.conversation().id;
+            let history = wait_terminal(&mut driver, conversation, &provider, &live);
+            wait_stopped(&mut driver, conversation);
+            assert!(delta_text(&history).contains("Inspection only:"));
+            assert!(driver.screen().contains("Scope: requested repository"));
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 3, "skill read, real CLI inspection, reply");
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-workspaces/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"));
+            let selected = user
+                .find("Selected Operator skill: ovrcr-workspaces")
+                .unwrap();
+            let instructions = user.find(document).expect("complete selected instructions");
+            let request_start = user.find(&format!("User request:\n{request}")).unwrap();
+            assert!(selected < instructions && instructions < request_start);
+            assert!(!operator_harness::history_text(&history).contains(document));
+            let result = marked_tool_json(&requests.last().unwrap().body, "WORKSPACES_RESULT=");
+            assert_eq!(result["before"], result["after"]);
+            assert_eq!(result["after"]["projects"], json!([]));
+            assert_eq!(result["after"]["sessions"], json!([]));
+            assert_eq!(
+                result["executable"],
+                live.executable.to_string_lossy().as_ref()
+            );
+            assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+            assert_eq!(status_cli(&live, &["project", "list"]), json!([]));
+            assert_eq!(status_cli(&live, &["workspace", "list"]), json!([]));
+            drop(driver);
+            assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+            live.join();
+            eprintln!(
+                "INSTALLED_PI_WORKSPACES_EXPLICIT_PASS quick={quick} requests=3 shutdown=verified"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; real Operator CLI/Git/PTY provisioning"]
+    fn installed_pi_operator_workspaces_provision_reuse_and_readiness() {
+        let pi = pi_executable();
+        for policy in ["off", "default_branch_only", "on"] {
+            let mut live = live::Live::idle().bounded();
+            // The matching binary and fixed working directory have no source checkout.
+            let relocated = live.root.path().join("installed/ovrcr");
+            std::fs::create_dir(relocated.parent().unwrap()).unwrap();
+            std::fs::copy(&live.executable, &relocated).unwrap();
+            live.executable = relocated;
+            std::fs::write(
+                live.config.join("dashboard.toml"),
+                format!("automatic_local_terminals = \"{policy}\"\n"),
+            )
+            .unwrap();
+            let provider = Provider::start(scenario_handler_mode(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+                ScenarioMode {
+                    workspaces: true,
+                    ..ScenarioMode::default()
+                },
+            ));
+            provider.seed_profile(&live.config);
+            provider.seed_workspace_profile(live.root.path());
+            install_personal_skill(live.root.path());
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.open();
+            let (inspect, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "inspect",
+                "Inspect the repository at $HOME/repo only; do not register it or launch anything.",
+            );
+            assert_eq!(inspect["before"], inspect["after"]);
+            assert_eq!(inspect["after"]["projects"], json!([]));
+            assert_eq!(status_cli(&live, &["project", "list"]), json!([]));
+            assert_skill_only_in_system(
+                "workspaces",
+                &provider.requests()[0].body,
+                &live.config.join("operator-pi"),
+            );
+            assert_eq!(
+                std::fs::read_to_string(live.config.join("operator-pi/ovrcr-workspaces/SKILL.md"))
+                    .unwrap(),
+                include_str!("../pi/skills/ovrcr-workspaces/SKILL.md")
+            );
+
+            let (missing, question) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "missing-base",
+                "Prepare a new branch, but I have not chosen its base. Show the missing-base CLI refusal and ask me; do not guess.",
+            );
+            assert_eq!(missing["before"], missing["after"]);
+            assert!(question.contains("Which explicit base"));
+            assert!(
+                missing["refusal"]["stderr"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--base")
+            );
+
+            let (created, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "provision",
+                "Register $HOME/repo as fixture with $HOME/fixture-workspaces; create feature/setup from main. No explicit session launch; preserve automatic-local-terminal policy.",
+            );
+            assert_eq!(created["head"], created["base"]);
+            assert_eq!(created["workspace"]["branch"], "feature/setup");
+            assert_eq!(created["after"]["workspaces"].as_array().unwrap().len(), 2);
+            let expected_shells = match policy {
+                "off" => 0,
+                "on" => 2,
+                _ => 1,
+            };
+            assert_eq!(
+                created["after"]["sessions"].as_array().unwrap().len(),
+                expected_shells
+            );
+            let (reused, reply) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "reuse",
+                "Reuse fixture's existing feature/setup Workspace; do not register or create a duplicate or launch anything.",
+            );
+            assert!(reply.contains("Reused Workspace"));
+            assert_eq!(created["workspace"], reused["workspace"]);
+            assert_eq!(
+                reused["before"]["workspaces"],
+                reused["after"]["workspaces"]
+            );
+            assert_eq!(
+                workspace_session_identities(&reused["before"]["sessions"]),
+                workspace_session_identities(&reused["after"]["sessions"])
+            );
+
+            let (terminal, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "terminal",
+                "Open a Terminal named requested-terminal in feature/setup that prints its cwd then opens /bin/sh. Reuse that named Terminal if already running.",
+            );
+            let (again, _) = workspaces_turn(
+                &mut driver,
+                &live,
+                &provider,
+                "terminal",
+                "Reuse the requested-terminal Terminal in feature/setup.",
+            );
+            assert_eq!(terminal["session"]["id"], again["session"]["id"]);
+            assert_eq!(terminal["session"]["run"], again["session"]["run"]);
+            assert_eq!(
+                again["after"]["sessions"].as_array().unwrap().len(),
+                expected_shells + 1
+            );
+            assert_eq!(again["session"]["cwd"], created["workspace"]["path"]);
+            if policy == "off" {
+                let (agent, reply) = workspaces_turn(
+                    &mut driver,
+                    &live,
+                    &provider,
+                    "agent",
+                    "Start a managed Pi Agent named requested-agent in feature/setup using the supplied Pi executable. Once its composer is verified, send the readiness probe and verify the response.",
+                );
+                assert_eq!(agent["session"]["kind"], json!({"agent": "pi"}));
+                assert_eq!(agent["session"]["cwd"], created["workspace"]["path"]);
+                assert!(agent["session"]["unread"].is_object());
+                assert!(reply.contains("WORKSPACES_AGENT_RESPONSE"));
+                eprintln!(
+                    "WORKSPACES_AGENT_STARTUP_SCREEN {}",
+                    agent["startup_screen"]
+                );
+                let id = agent["session"]["id"].as_u64().unwrap().to_string();
+                assert!(
+                    status_cli(&live, &["terminal", "read", &id])["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("WORKSPACES_AGENT_RESPONSE")
+                );
+                assert!(provider.requests().iter().any(|request| {
+                    operator_provider::last_user_text(&request.body)
+                        .starts_with("WORKSPACES_AGENT_PROBE:")
+                }));
+            }
+            let root_branch = Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["branch", "--show-current"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                String::from_utf8(root_branch.stdout).unwrap().trim(),
+                "main"
+            );
+            assert!(
+                Command::new("git")
+                    .env("HOME", live.root.path())
+                    .arg("-C")
+                    .arg(&live.repo)
+                    .args(["diff", "--exit-code"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert_eq!(
+                status_cli(&live, &["workspace", "list"])
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            drop(driver);
+            assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+            live.join();
+            eprintln!(
+                "INSTALLED_PI_WORKSPACES_PASS policy={policy} provider_requests={} real_git=true real_pty=true shutdown=verified",
+                provider.requests().len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires installed Pi; real ambiguous/detached/Root and permission refusals"]
+    fn installed_pi_operator_workspaces_refusals_preserve_resources() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler_mode(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
+        ));
+        provider.seed_profile(&live.config);
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        live.ready("feature/setup");
+        status_cli(
+            &live,
+            &[
+                "workspace",
+                "create",
+                "--project",
+                "fixture",
+                "--new-branch",
+                "other",
+                "--base",
+                "main",
+            ],
+        );
+        let other = status_cli(
+            &live,
+            &[
+                "workspace",
+                "get",
+                "--project",
+                "fixture",
+                "--branch",
+                "other",
+            ],
+        );
+        let other_path = other["path"].as_str().unwrap();
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .args([
+                    "-C",
+                    other_path,
+                    "checkout",
+                    "--ignore-other-worktrees",
+                    "feature/setup"
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut driver = DashboardDriver::connect(&live);
+        driver.open();
+        let (ambiguous, question) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "ambiguous",
+            "Inspect feature/setup and show any CLI ambiguity; ask me to choose a path before launching.",
+        );
+        assert!(question.contains("Which exact Workspace path"));
+        assert!(
+            ambiguous["refusal"]
+                .to_string()
+                .contains("ambiguous workspace")
+        );
+        assert_eq!(ambiguous["candidates"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            ambiguous["before"]["workspaces"],
+            ambiguous["after"]["workspaces"]
+        );
+        assert_eq!(
+            workspace_session_identities(&ambiguous["before"]["sessions"]),
+            workspace_session_identities(&ambiguous["after"]["sessions"])
+        );
+        for candidate in ambiguous["candidates"].as_array().unwrap() {
+            assert!(question.contains(candidate["path"].as_str().unwrap()));
+        }
+
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .args(["-C", other_path, "checkout", "--detach"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (detached, question) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "detached",
+            "Inspect the detached Workspace; show why branch targeting refuses and ask me to resolve its path. Do not launch.",
+        );
+        assert!(
+            question.contains("Confirm whether detached checkout") && question.contains(other_path)
+        );
+        assert!(detached["refusal"].to_string().contains("by --path"));
+        assert_eq!(
+            detached["before"]["workspaces"],
+            detached["after"]["workspaces"]
+        );
+        assert_eq!(
+            workspace_session_identities(&detached["before"]["sessions"]),
+            workspace_session_identities(&detached["after"]["sessions"])
+        );
+
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["checkout", "-b", "root-off-default"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let (root, reply) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "root",
+            "Try opening a Terminal in Root; if its branch protection refuses, surface that refusal without switching branches or editing files.",
+        );
+        assert!(reply.contains("Root launch refused"));
+        assert_eq!(root["branch"], "root-off-default");
+        assert!(root["refusal"].to_string().contains("default branch"));
+        assert_eq!(root["before"]["workspaces"], root["after"]["workspaces"]);
+        assert_eq!(
+            workspace_session_identities(&root["before"]["sessions"]),
+            workspace_session_identities(&root["after"]["sessions"])
+        );
+
+        let input_marker = live.root.path().join("permission-answered");
+        let command = format!(
+            "printf 'Trust this workspace? [y/N]\\n'; IFS= read -r answer; printf '%s' \"$answer\" > '{}'",
+            input_marker.display()
+        );
+        let trust = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "feature/setup",
+                "--name",
+                "trust-screen",
+                "--label",
+                "pi",
+                "--",
+                "/bin/sh",
+                "-c",
+                &command,
+            ],
+        );
+        let id = trust["id"].as_u64().unwrap().to_string();
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if status_cli(&live, &["terminal", "read", &id])["text"]
+                .as_str()
+                .unwrap()
+                .contains("Trust this workspace?")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(20));
+        }
+        let (trust, reply) = workspaces_turn(
+            &mut driver,
+            &live,
+            &provider,
+            "trust",
+            "Inspect trust-screen. Is the Agent ready? Surface unexpected permission questions; do not answer them.",
+        );
+        assert_eq!(trust["session"]["kind"], "terminal");
+        assert!(reply.contains("not a verified Agent") && reply.contains("Trust this workspace?"));
+        assert!(
+            !input_marker.exists(),
+            "inspection must not answer a permission question"
+        );
+        assert_eq!(
+            workspace_session_identities(&trust["before"]["sessions"]),
+            workspace_session_identities(&trust["after"]["sessions"])
+        );
+        assert_eq!(
+            status_cli(&live, &["workspace", "list"])
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(
+            Command::new("git")
+                .env("HOME", live.root.path())
+                .arg("-C")
+                .arg(&live.repo)
+                .args(["diff", "--exit-code"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        drop(driver);
+        assert_eq!(live.request(Request::Shutdown { kill: true }), Response::Ok);
+        live.join();
+        eprintln!(
+            "INSTALLED_PI_WORKSPACES_REFUSALS_PASS provider_requests={} cases=4 permission_input=false shutdown=verified",
+            provider.requests().len()
+        );
+    }
+
+    fn control_turn(
+        driver: &mut DashboardDriver,
+        live: &live::Live,
+        provider: &Provider,
+        id: u64,
+        run: u64,
+        action: &str,
+        quick: bool,
+    ) -> Value {
+        driver.reopen();
+        let conversation = driver.conversation().id;
+        let start = provider.requests().len();
+        let request = format!("Control exact session {id} {run} {action}");
+        if quick {
+            driver.quick(&request);
+        } else {
+            driver.submit(&request);
+        }
+        let history = wait_terminal(driver, conversation, provider, live);
+        wait_stopped(driver, conversation);
+        let requests = provider.requests();
+        assert_eq!(
+            requests.len() - start,
+            5,
+            "one skill read, inventory, action, refresh, answer"
+        );
+        let body = &requests.last().unwrap().body;
+        let result = marked_tool_json(body, "CONTROL_RESULT=");
+        assert_eq!(result["instance"], live.config.to_string_lossy().as_ref());
+        assert_eq!(
+            result["executable"],
+            live.executable.to_string_lossy().as_ref()
+        );
+        assert!(
+            delta_text(&history).contains(&format!("Session {id} requested run {run}: {action}"))
+        );
+        result
+    }
+
+    fn wait_care_row(live: &live::Live, id: u64, predicate: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            let rows = status_cli(live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["id"] == id)
+                .unwrap();
+            if predicate(row) {
+                return row.clone();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "session care observation unavailable: {row}"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_session_care_control_and_native_resume() {
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+        ));
+        provider.seed_profile(&live.config);
+        provider.seed_workspace_profile(live.root.path());
+        live.start_binary_env(&[
+            ("OVRCR_PI_EXECUTABLE", pi.as_os_str()),
+            ("PI_OFFLINE", OsStr::new("1")),
+        ]);
+        live.ready("care-control");
+        let terminal = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "care-control",
+                "--name",
+                "care-terminal",
+                "--",
+                "/bin/sh",
+            ],
+        );
+        let id = terminal["id"].as_u64().unwrap();
+        let run = terminal["run"].as_u64().unwrap();
+        live.own_group(terminal["pid"].as_u64().unwrap() as libc::pid_t);
+        let mut driver = DashboardDriver::connect(&live);
+        driver.select_fixture_workspace();
+        driver.open();
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "pause", false)["code"],
+            0
+        );
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "paused");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "resume", true)["code"],
+            0
+        );
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "running");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        assert_eq!(stopped["recovery"]["requires_ack"], false);
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "reopen", true)["code"],
+            0
+        );
+        let replacement = wait_care_row(&live, id, |r| r["run"] == run + 1);
+        live.own_group(replacement["pid"].as_u64().unwrap() as libc::pid_t);
+        let refused = control_turn(&mut driver, &live, &provider, id, run, "stop", false);
+        assert_ne!(refused["code"], 0);
+        assert!(refused["error"].as_str().unwrap().contains("Conflict"));
+        assert_eq!(wait_care_row(&live, id, |_| true)["phase"], "running");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run + 1, "close", true)["code"],
+            0
+        );
+        assert!(
+            status_cli(&live, &["terminal", "list", "--archived"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == id)
+        );
+
+        // Real managed Pi creates its own history and certified Reporter reference.
+        let native_history = live.root.path().join("native-history");
+        let native = status_cli(
+            &live,
+            &[
+                "terminal",
+                "create",
+                "--project",
+                "fixture",
+                "--workspace",
+                "care-control",
+                "--name",
+                "care-native",
+                "--",
+                live.executable.to_str().unwrap(),
+                "agent",
+                "run",
+                "pi",
+                "--",
+                pi.to_str().unwrap(),
+                "--no-extensions",
+                "--no-skills",
+                "--no-context-files",
+                "--no-prompt-templates",
+                "--no-themes",
+                "--no-approve",
+                "--session-dir",
+                native_history.to_str().unwrap(),
+                "--",
+                "CARE_NATIVE_SEED",
+            ],
+        );
+        let id = native["id"].as_u64().unwrap();
+        let run = native["run"].as_u64().unwrap();
+        live.own_group(native["pid"].as_u64().unwrap() as libc::pid_t);
+        wait_care_row(&live, id, |r| r["activity"] == "response_ready");
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        assert_eq!(stopped["recovery"]["requires_ack"], false);
+        let reference = stopped["recovery"]["conversation"].clone();
+        assert!(!reference.is_null(), "native reference: {stopped}");
+        let requests_before_resume = provider.requests().len();
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run, "reopen", true)["code"],
+            0
+        );
+        let resumed = wait_care_row(&live, id, |r| r["recovery"]["attached"] == true);
+        assert_eq!(resumed["run"], run + 1);
+        assert_eq!(resumed["recovery"]["conversation"], reference);
+        live.own_group(resumed["pid"].as_u64().unwrap() as libc::pid_t);
+        assert_eq!(
+            provider.requests().len() - requests_before_resume,
+            5,
+            "resume must not replay a prompt"
+        );
+        let screen = driver.terminal_text(ovrcr::protocol::SessionId(id));
+        assert!(
+            screen.contains("CARE_NATIVE_HISTORY_PRESERVED"),
+            "native history was not restored: {screen}"
+        );
+
+        assert_eq!(
+            control_turn(&mut driver, &live, &provider, id, run + 1, "stop", false)["code"],
+            0
+        );
+        let stopped = wait_care_row(&live, id, |r| r["phase"] == "exited");
+        // The fixture alone makes its history unavailable, preserving its bytes.
+        let files = std::fs::read_dir(&native_history)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files.len(),
+            1,
+            "only the original native conversation exists"
+        );
+        let history_path = &files[0];
+        assert_eq!(session_header(history_path)["id"], reference);
+        let history_bytes = std::fs::read(history_path).unwrap();
+        let saved = history_path.with_extension("saved");
+        std::fs::rename(history_path, &saved).unwrap();
+        let failed = control_turn(&mut driver, &live, &provider, id, run + 1, "reopen", false);
+        assert_ne!(failed["code"], 0);
+        let retained = wait_care_row(&live, id, |_| true);
+        assert_eq!(retained["run"], stopped["run"]);
+        assert_eq!(retained["phase"], "exited");
+        assert_eq!(retained["recovery"]["conversation"], reference);
+        assert!(!retained["recovery"]["failure"].is_null());
+        assert_eq!(std::fs::read(saved).unwrap(), history_bytes);
+        eprintln!(
+            "INSTALLED_PI_SESSION_CONTROL_PASS terminal_actions=6 stale_refusals=1 native_resumes=1 recovery_failures=1 provider_requests={}",
+            provider.requests().len()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_session_care_diagnosis() {
+        use ovrcr::protocol::AgentProvider;
+        let pi = pi_executable();
+        let live = live::Live::idle().bounded();
+        let provider = Provider::start(scenario_handler_mode(
+            live.repo.clone(),
+            live.root.path().join("marker"),
+            live.root.path().join("background"),
+            ScenarioMode {
+                workspaces: true,
+                ..ScenarioMode::default()
+            },
+        ));
+        provider.seed_profile(&live.config);
+        install_personal_skill(live.root.path());
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        live.ready("care-work");
+        let (interrupted, owner) = status_agent(&live, "care-interrupted");
+        status_cli(&live, &["shutdown", "--kill"]);
+        live.join();
+        drop(owner);
+        // As in retained_sessions::prepare_interrupted_claude: only after all
+        // fixture processes stop, seed a same-boot interrupted retained run.
+        // Same boot deliberately leaves ownership uncertain, preventing display recovery.
+        let database =
+            rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        assert_eq!(
+            database
+                .execute(
+                    "UPDATE retained_sessions SET stopped = 0, failure = NULL WHERE id = ?1",
+                    [interrupted.0 as i64],
+                )
+                .unwrap(),
+            1
+        );
+        drop(database);
+        live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+        let mut owners = Vec::new();
+        let mut cases = vec![(interrupted, "care-interrupted", "interrupted", "read")];
+        for (name, native, condition, read) in [
+            ("care-busy", AgentProvider::Pi, "busy", "read"),
+            ("care-idle", AgentProvider::Pi, "idle", "read"),
+            ("care-omp", AgentProvider::Omp, "idle", "screen"),
+            (
+                "care-transcript",
+                AgentProvider::Codex,
+                "response_ready",
+                "transcript",
+            ),
+            (
+                "care-truncated",
+                AgentProvider::Codex,
+                "waiting_input",
+                "transcript",
+            ),
+            (
+                "status-unavailable",
+                AgentProvider::Codex,
+                "unavailable reporting; activity unknown",
+                "transcript",
+            ),
+            ("care-missing", AgentProvider::Codex, "busy", "transcript"),
+            ("care-exited", AgentProvider::Pi, "exited", "read"),
+        ] {
+            let (id, owner) = reporter_agent(&live, name, native);
+            owners.push(owner);
+            cases.push((id, name, condition, read));
+            // Identical misleading display titles cannot retarget the numeric request.
+            status_cli(
+                &live,
+                &["terminal", "rename", &id.0.to_string(), "finished"],
+            );
+            if name == "care-exited" {
+                status_cli(
+                    &live,
+                    &[
+                        "terminal",
+                        "send",
+                        &id.0.to_string(),
+                        "--text",
+                        "fixture-exit",
+                    ],
+                );
+                let deadline = Instant::now() + BUDGET;
+                loop {
+                    let rows = status_cli(&live, &["terminal", "list"]);
+                    if rows
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|r| r["id"] == id.0 && r["phase"] == "exited")
+                    {
+                        break;
+                    }
+                    assert!(Instant::now() < deadline, "owned fixture did not exit");
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+        let before = status_cli(&live, &["terminal", "list"]);
+        let projects = status_cli(&live, &["project", "list"]);
+        let workspaces = status_cli(&live, &["workspace", "list"]);
+        let histories: Vec<_> = ["care-transcript", "care-truncated"]
+            .into_iter()
+            .map(|name| {
+                let path = live.root.path().join(format!("{name}.jsonl"));
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+        let mut driver = DashboardDriver::connect(&live);
+        driver.select_fixture_workspace();
+        driver.open();
+        let conversation = driver.conversation().id;
+        for (index, (id, name, condition, read)) in cases.iter().enumerate() {
+            driver.reopen();
+            let request = format!(
+                "{CARE_REQUEST}{} without changing it. Why does it appear stuck?",
+                id.0
+            );
+            let start = provider.requests().len();
+            if index % 2 == 0 {
+                driver.submit(&request);
+            } else {
+                driver.quick(&request);
+            }
+            let history = wait_terminal(&mut driver, conversation, &provider, &live);
+            wait_stopped(&mut driver, conversation);
+            let requests = provider.requests();
+            let turn_requests = &requests[start..];
+            assert_eq!(
+                turn_requests.len(),
+                5,
+                "{name}: instructions, inventory, content, refresh, answer"
+            );
+            if index == 0 {
+                assert_normal_first_prompt(name, &turn_requests[0].body, &request);
+            } else {
+                assert!(
+                    operator_provider::last_user_text(&turn_requests[0].body).ends_with(&request)
+                );
+                assert!(
+                    operator_provider::non_system_text(&turn_requests[0].body)
+                        .contains("Inspection only; no control or recovery performed."),
+                    "resumed diagnosis retains the prior conversation"
+                );
+            }
+            assert_skill_only_in_system(
+                name,
+                &turn_requests[0].body,
+                &live.config.join("operator-pi"),
+            );
+            let body = &turn_requests.last().unwrap().body;
+            let observed = marked_tool_json(body, "CARE_INVENTORY=");
+            let expected = before
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id.0)
+                .unwrap();
+            assert_eq!(&observed["session"], expected);
+            assert_eq!(observed["instance"], live.config.to_string_lossy().as_ref());
+            assert_eq!(
+                observed["executable"],
+                live.executable.to_string_lossy().as_ref()
+            );
+            assert_eq!(observed["workspace"]["id"], "work");
+            let content = marked_tool_json(body, "CARE_CONTENT=");
+            assert_eq!(content["session"], id.0);
+            assert_eq!(content["command"], *read);
+            let refreshed = marked_tool_json(body, "CARE_REFRESH=");
+            assert_eq!(&refreshed["session"], expected);
+            let turn = history
+                .conversation
+                .current_turn
+                .as_ref()
+                .unwrap()
+                .identity
+                .turn;
+            let answer: String = history
+                .messages
+                .iter()
+                .filter(|message| message.turn == turn)
+                .filter_map(|message| match &message.content {
+                    OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(text)) => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                answer.contains(&format!("Known: {condition}")),
+                "{name}: {answer}"
+            );
+            assert!(
+                answer.contains(&format!("session {}, run {}", id.0, expected["run"])),
+                "{answer}"
+            );
+            assert!(answer.contains("Unknown:") && answer.contains("Next supported action:"));
+            match *name {
+                "care-interrupted" | "care-exited" => {
+                    assert_eq!(expected["recovery"]["requires_ack"], true);
+                    assert!(
+                        answer.contains("human ownership verification required"),
+                        "{answer}"
+                    );
+                }
+                "care-transcript" => {
+                    assert!(
+                        content["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Diagnosis fixture reply")
+                    );
+                    assert!(expected["unread"].is_object());
+                    assert!(answer.contains("Unread unchanged"));
+                    assert!(
+                        answer
+                            .contains("Diagnosis fixture reply: checks finished; review required.")
+                    );
+                }
+                "care-truncated" => {
+                    assert!(content["output"].as_str().unwrap().contains('…'));
+                    assert!(
+                        !content["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("PRIVATE_CLIPPED_TAIL")
+                    );
+                    assert!(
+                        refreshed["fallback"]["output"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Observed Agent screen: care-truncated")
+                    );
+                    assert!(
+                        answer.contains("transcript truncated")
+                            && answer.contains("human answer required")
+                            && answer.contains("Which deployment target?")
+                    );
+                    assert!(
+                        !expected["agent"]["input_requests"]
+                            .as_array()
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+                "care-missing" | "status-unavailable" => {
+                    assert_ne!(
+                        content["code"], 0,
+                        "a nonexistent transcript must be refused"
+                    );
+                    assert!(answer.contains("content unavailable"));
+                    assert_eq!(refreshed["fallback"]["code"], 0);
+                }
+                _ => assert!(
+                    answer.contains(&format!("Observed Agent screen: {name}")),
+                    "{answer}"
+                ),
+            }
+            let outputs = tool_outputs_with_status(&history);
+            assert!(
+                outputs
+                    .iter()
+                    .all(|(_, _, status)| *status == OperatorToolStatus::Succeeded)
+            );
+            assert!(!operator_provider::non_system_text(body).contains(PERSONAL_SKILL_SENTINEL));
+            driver.reopen();
+            assert!(
+                driver.screen().contains(&format!("Known: {condition}")),
+                "{name}: diagnosis must render"
+            );
+            let after = status_cli(&live, &["terminal", "list"]);
+            let rows: Vec<_> = after
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["scope"] == "Workspace")
+                .cloned()
+                .collect();
+            assert_eq!(
+                Value::Array(rows),
+                before,
+                "{name}: process/run, attention and ownership unchanged"
+            );
+            eprintln!(
+                "INSTALLED_PI_SESSION_CARE_CASE name={name} session={} run={} quick={} condition={condition} read={read} requests=5 unchanged=true",
+                id.0,
+                expected["run"],
+                index % 2 != 0
+            );
+        }
+        assert_eq!(status_cli(&live, &["project", "list"]), projects);
+        assert_eq!(status_cli(&live, &["workspace", "list"]), workspaces);
+        for (path, bytes) in histories {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        for (_, name, _, _) in &cases {
+            let input = live.root.path().join(format!("{name}.identity.input"));
+            if *name == "care-exited" {
+                assert_eq!(std::fs::read_to_string(input).unwrap(), "fixture-exit\n");
+            } else {
+                assert!(!input.exists(), "diagnosis sent input to {name}");
+            }
+        }
+        assert!(!driver.conversation().worker_live);
+        eprintln!(
+            "INSTALLED_PI_SESSION_CARE_PASS cases={} requests={} full_and_quick=true unchanged=true",
+            cases.len(),
+            provider.requests().len()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_status_invalid_bundle_prevents_prompting() {
+        check_invalid_bundle(false);
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill_invalid_bundle() {
+        check_invalid_bundle(true);
+    }
+
+    fn check_invalid_bundle(explicit: bool) {
+        let pi = pi_executable();
+        for invalid in [
+            "document-directory",
+            "reference-symlink",
+            "writable-directory",
+            "blocked-reference-parent",
+        ] {
+            for quick in [false, true] {
+                let live = live::Live::idle().bounded();
+                let provider =
+                    Provider::start(Box::new(|_, _| Plan::text("UNEXPECTED_MODEL_WORK")));
+                provider.seed_profile(&live.config);
+                let directory = live.config.join("operator-pi/ovrcr-status");
+                std::fs::create_dir(&directory).unwrap();
+                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                    .unwrap();
+                match invalid {
+                    "document-directory" => {
+                        std::fs::create_dir(directory.join("SKILL.md")).unwrap()
+                    }
+                    "reference-symlink" => {
+                        let outside = live.root.path().join("outside");
+                        std::fs::create_dir(&outside).unwrap();
+                        std::fs::write(outside.join("inventory.md"), "must survive").unwrap();
+                        std::os::unix::fs::symlink(&outside, directory.join("references")).unwrap();
+                    }
+                    "writable-directory" => {
+                        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o777))
+                            .unwrap()
+                    }
+                    "blocked-reference-parent" => {
+                        std::fs::write(directory.join("references"), "not a directory").unwrap()
+                    }
+                    _ => unreachable!(),
+                }
+                live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+                let mut driver = DashboardDriver::connect(&live);
+                let request = if explicit {
+                    format!("/skill:ovrcr-status {STATUS_REQUEST}")
+                } else {
+                    STATUS_REQUEST.into()
+                };
+                if quick {
+                    driver.quick(&request);
+                } else {
+                    driver.open();
+                    driver.submit(&request);
+                }
+                let opened = driver.conversation();
+                let failed = driver.wait_history(opened.id, |history| {
+                    history
+                        .conversation
+                        .current_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn.state == OperatorTurnState::Error)
+                });
+                wait_stopped(&mut driver, opened.id);
+                assert!(
+                    provider.requests().is_empty(),
+                    "{invalid}: no model request may precede complete asset delivery"
+                );
+                assert!(tool_outputs_with_status(&failed).is_empty());
+                let screen = driver.screen();
+                let error = if invalid == "document-directory" {
+                    "Pi Operator integration is unavailable; no prompt was sent."
+                } else {
+                    "Operator Pi context is unavailable; saved data was preserved."
+                };
+                assert!(screen.contains(error), "{screen}");
+                assert!(
+                    screen.contains(STATUS_REQUEST),
+                    "the failed request remains recoverable in the journal: {screen}"
+                );
+                if invalid == "reference-symlink" {
+                    assert_eq!(
+                        std::fs::read_to_string(live.root.path().join("outside/inventory.md"))
+                            .unwrap(),
+                        "must survive"
+                    );
+                }
+                eprintln!(
+                    "INSTALLED_PI_INVALID_BUNDLE_PASS case={invalid} provider_requests=0 quick={quick} explicit={explicit}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_status_overview() {
+        check_status_overview(false);
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill_lifetime() {
+        check_status_overview(true);
+    }
+
+    fn check_status_overview(explicit: bool) {
+        let selected = |request: &str| {
+            if explicit {
+                format!("/skill:ovrcr-status {request}")
+            } else {
+                request.to_owned()
+            }
+        };
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(scenario_handler(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+            ));
+            provider.seed_profile_with(
+                &live.config,
+                200_000,
+                Some(json!({"enabled": false, "reserveTokens": 1024, "keepRecentTokens": 1})),
+            );
+            install_personal_skill(live.root.path());
+            for (path, name) in [
+                (
+                    live.config.join("operator-pi/unregistered-sentinel"),
+                    "unregistered-sentinel",
+                ),
+                (
+                    live.config.join("operator-pi/skills/unregistered-sentinel"),
+                    "unregistered-sentinel",
+                ),
+                (
+                    live.config
+                        .join("operator-workdir/.agents/skills/project-sentinel"),
+                    "project-sentinel",
+                ),
+            ] {
+                std::fs::create_dir_all(&path).unwrap();
+                std::fs::write(path.join("SKILL.md"), format!("---\nname: {name}\ndescription: forbidden ambient discovery\n---\nNot registered.\n")).unwrap();
+            }
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            live.ready("status-work");
+            let other = live.root.path().join("other-repo");
+            let clone = live.command().get_program().to_os_string();
+            // A second registered Project outside the captured target proves
+            // instance-wide default scope rather than an empty metadata demo.
+            assert!(
+                Command::new("git")
+                    .args(["clone", "--quiet"])
+                    .arg(&live.repo)
+                    .arg(&other)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let output = live
+                .command()
+                .args(["project", "add", "other"])
+                .arg(&other)
+                .arg("--workspace-root")
+                .arg(live.root.path().join("other-workspaces"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let (ready, _ready_owner) = status_agent(&live, "status-ready");
+            let (input, _input_owner) = status_agent(&live, "status-input");
+            let (unavailable, _unavailable_owner) = status_agent(&live, "status-unavailable");
+            let before = status_cli(&live, &["terminal", "list"]);
+            assert!(
+                before
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == ready.0 && row["unread"].is_object())
+            );
+            assert!(
+                before
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == input.0 && row["activity"] == "waiting_input")
+            );
+            assert!(
+                before
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == unavailable.0 && row["reporting_unavailable"] == true)
+            );
+            let projects_before = status_cli(&live, &["project", "list"]);
+            let workspaces_before = status_cli(&live, &["workspace", "list"]);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.select_fixture_workspace();
+            if quick {
+                driver.quick(&selected(STATUS_REQUEST));
+            } else {
+                driver.open();
+                driver.submit(&selected(STATUS_REQUEST));
+            }
+            let opened = driver.conversation();
+            let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+            wait_stopped(&mut driver, opened.id);
+            let answer = delta_text(&history);
+            for expected in [
+                "Scope: all registered Projects in this instance",
+                "Projects: fixture, other",
+                "5/50; 45 remaining",
+                "Operator: separate slot",
+                "Unread result needs review",
+                "waiting_input",
+                "unavailable reporting; activity unknown",
+            ] {
+                assert!(answer.contains(expected), "missing {expected}: {answer}");
+            }
+            let first = &provider.requests()[0].body;
+            if explicit {
+                assert!(
+                    operator_provider::last_user_text(first)
+                        .contains(include_str!("../pi/skills/ovrcr-status/SKILL.md"))
+                );
+                assert!(matches!(
+                    history.messages[0].content,
+                    OperatorMessageContent::User { skill: Some(_), .. }
+                ));
+            }
+            assert_normal_first_prompt("status", first, STATUS_REQUEST);
+            assert!(
+                operator_provider::last_user_text(first).contains("\"workspace\":\"status-work\""),
+                "captured Workspace must not narrow the default overview"
+            );
+            assert_skill_only_in_system("status", first, &live.config.join("operator-pi"));
+            let outputs = tool_outputs_with_status(&history);
+            assert_eq!(
+                outputs.len(),
+                3,
+                "only instructions, supporting reference and metadata were read"
+            );
+            assert!(
+                outputs
+                    .iter()
+                    .all(|(_, _, status)| *status == OperatorToolStatus::Succeeded)
+            );
+            let inventory = marked_tool_json(
+                &provider.requests().last().unwrap().body,
+                "STATUS_INVENTORY=",
+            );
+            assert_eq!(inventory["executable"], clone.to_string_lossy().as_ref());
+            assert_eq!(
+                inventory["instance"],
+                live.config.to_string_lossy().as_ref()
+            );
+            assert_eq!(inventory["projects"], projects_before);
+            // A narrower resumed request reads the same registered instructions.
+            driver.reopen();
+            assert!(
+                driver.screen().contains("Scope: all registered Projects"),
+                "full Operator renders the overview from either entry point"
+            );
+            for (request, scope) in [
+                (STATUS_PROJECT_REQUEST, "Scope: Project fixture"),
+                (STATUS_WORKSPACE_REQUEST, "Scope: Workspace status-work"),
+                (STATUS_SESSION_REQUEST, "Scope: session status-ready"),
+            ] {
+                let previous = driver.conversation().current_turn.unwrap().identity.turn.0;
+                let narrowed = submit_next(
+                    &mut driver,
+                    opened.id,
+                    &selected(request),
+                    previous,
+                    &provider,
+                    &live,
+                );
+                wait_stopped(&mut driver, opened.id);
+                let turn = narrowed
+                    .conversation
+                    .current_turn
+                    .as_ref()
+                    .unwrap()
+                    .identity
+                    .turn;
+                let reply: String = narrowed
+                    .messages
+                    .iter()
+                    .filter(|message| message.turn == turn)
+                    .filter_map(|message| match &message.content {
+                        OperatorMessageContent::Worker(OperatorWorkerEvent::AssistantDelta(
+                            text,
+                        )) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    reply.contains(scope) && !reply.contains("Projects: fixture, other"),
+                    "{reply}"
+                );
+                if request == STATUS_SESSION_REQUEST {
+                    assert!(
+                        reply.contains("Sessions: 1.") && !reply.contains("status-input"),
+                        "{reply}"
+                    );
+                }
+            }
+            // An explicitly requested existing coordinator watch keeps Pi warm;
+            // status itself must neither create nor remove a lease.
+            driver.submit(STATUS_WATCH_REQUEST);
+            let watched = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert!(watched.conversation.worker_live);
+            let warm_run = watched.conversation.run;
+            if explicit {
+                assert_explicit_selection_refused(&mut driver, &provider);
+            }
+            let document = live.config.join("operator-pi/ovrcr-status/SKILL.md");
+            let inode = std::fs::metadata(&document).unwrap().ino();
+            let previous = watched.conversation.current_turn.unwrap().identity.turn.0;
+            let warm = submit_next(
+                &mut driver,
+                opened.id,
+                &selected(STATUS_REQUEST),
+                previous,
+                &provider,
+                &live,
+            );
+            assert_eq!(warm.conversation.run, warm_run);
+            assert!(warm.conversation.worker_live);
+            assert_eq!(
+                std::fs::metadata(&document).unwrap().ino(),
+                inode,
+                "warm turns do not rematerialize instructions"
+            );
+            // Native compaction within the same leased worker keeps metadata and
+            // actual on-demand instruction reads consistent.
+            driver.submit("/compact");
+            let compacted = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert_eq!(compacted.conversation.run, warm_run);
+            assert!(compacted.conversation.worker_live);
+            let previous = driver.conversation().current_turn.unwrap().identity.turn.0;
+            let after_compact = submit_next(
+                &mut driver,
+                opened.id,
+                &selected(STATUS_REQUEST),
+                previous,
+                &provider,
+                &live,
+            );
+            assert_eq!(after_compact.conversation.run, warm_run);
+            assert_eq!(std::fs::metadata(&document).unwrap().ino(), inode);
+            driver.submit(STATUS_UNWATCH_REQUEST);
+            wait_terminal(&mut driver, opened.id, &provider, &live);
+            wait_stopped(&mut driver, opened.id);
+            assert_eq!(
+                driver.session(ready).phase,
+                SessionPhase::Running,
+                "removing a watch never stops the Agent"
+            );
+            // Only a later cold start refreshes stale copies, including required
+            // references; it does not depend on the source checkout.
+            std::fs::write(&document, "stale skill from a previous binary").unwrap();
+            let reference = document.parent().unwrap().join("references/inventory.md");
+            std::fs::write(&reference, "stale reference").unwrap();
+            let previous = driver.conversation().current_turn.unwrap().identity.turn.0;
+            submit_next(
+                &mut driver,
+                opened.id,
+                &selected(STATUS_REQUEST),
+                previous,
+                &provider,
+                &live,
+            );
+            wait_stopped(&mut driver, opened.id);
+            assert_eq!(
+                std::fs::read_to_string(document).unwrap(),
+                include_str!("../pi/skills/ovrcr-status/SKILL.md")
+            );
+            assert_eq!(
+                std::fs::read_to_string(reference).unwrap(),
+                include_str!("../pi/skills/ovrcr-status/references/inventory.md")
+            );
+            assert!(
+                provider
+                    .requests()
+                    .iter()
+                    .any(|request| operator_provider::is_compaction_request(&request.body))
+            );
+            for request in provider
+                .requests()
+                .iter()
+                .filter(|request| !operator_provider::is_compaction_request(&request.body))
+            {
+                if explicit {
+                    let user = operator_provider::last_user_text(&request.body);
+                    if user.contains("Selected Operator skill: ovrcr-status") {
+                        assert!(user.contains(include_str!("../pi/skills/ovrcr-status/SKILL.md")));
+                        assert!(
+                            user.find("Captured OVRCR context").unwrap()
+                                < user.find("Selected Operator skill:").unwrap()
+                        );
+                        assert!(
+                            user.find("Selected Operator skill:").unwrap()
+                                < user.find("User request:").unwrap()
+                        );
+                    }
+                }
+                assert_skill_only_in_system(
+                    "status lifetime",
+                    &request.body,
+                    &live.config.join("operator-pi"),
+                );
+            }
+            let after = status_cli(&live, &["terminal", "list"]);
+            let workspace_rows: Vec<_> = after
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["scope"] == "Workspace")
+                .cloned()
+                .collect();
+            assert_eq!(
+                Value::Array(workspace_rows),
+                before,
+                "status preserves runs, activity, Unread, Input requests and ownership"
+            );
+            assert_eq!(status_cli(&live, &["project", "list"]), projects_before);
+            assert_eq!(status_cli(&live, &["workspace", "list"]), workspaces_before);
+            assert!(
+                !driver.conversation().worker_live,
+                "status creates no periodic checks or watch lease"
+            );
+            eprintln!(
+                "INSTALLED_PI_STATUS_PASS quick={quick} requests={} sessions=5 scope_cases=4 compacted=true",
+                provider.requests().len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_explicit_skill() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(Box::new(|body, _| {
+                let user = operator_provider::last_user_text(body);
+                if user.contains("Selected Operator skill: ovrcr-coordinator")
+                    && user.ends_with("User request:\n")
+                {
+                    Plan::text("Which tasks and Workspaces should I coordinate?")
+                } else {
+                    Plan::text("EXPLICIT_SKILL_DONE")
+                }
+            }));
+            provider.seed_profile(&live.config);
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            let mut driver = DashboardDriver::connect(&live);
+            if quick {
+                driver.quick("/skill:missing UNSENT_REQUEST");
+            } else {
+                driver.open();
+                driver.submit("/skill:missing UNSENT_REQUEST");
+            }
+            assert!(provider.requests().is_empty());
+            let screen = driver.screen();
+            assert!(
+                screen.contains("unavailable Operator skill") && screen.contains("UNSENT_REQUEST"),
+                "{screen}"
+            );
+            driver.dashboard.ctrl('c');
+            driver.submit("/reload UNSENT_NATIVE_COMMAND");
+            assert!(provider.requests().is_empty());
+            assert!(driver.screen().contains("Unknown slash command"));
+            driver.dashboard.ctrl('c');
+            driver.submit("/skill:ovrcr-status EXPLICIT_REQUEST");
+            let opened = driver.conversation();
+            let history = wait_terminal(&mut driver, opened.id, &provider, &live);
+            assert!(delta_text(&history).contains("EXPLICIT_SKILL_DONE"));
+            wait_stopped(&mut driver, opened.id);
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 1);
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-status/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"), "{user}");
+            let instructions = user
+                .find(document)
+                .expect("full selected document before model work");
+            let request = user.find("User request:\nEXPLICIT_REQUEST").unwrap();
+            assert!(
+                instructions < request,
+                "instructions precede distinct request"
+            );
+            assert!(
+                user.contains(
+                    &live
+                        .config
+                        .join("operator-pi/ovrcr-status/SKILL.md")
+                        .display()
+                        .to_string()
+                )
+            );
+            assert!(!operator_harness::history_text(&history).contains(document));
+            assert_explicit_selection_refused(&mut driver, &provider);
+            // A fresh Dashboard reconnects to the completed checkpoint. A bare
+            // invocation supplies instructions, but no invented task or authority.
+            drop(driver);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.open();
+            driver.submit("/skill:ovrcr-coordinator");
+            let bare = wait_terminal(&mut driver, opened.id, &provider, &live);
+            wait_stopped(&mut driver, opened.id);
+            assert!(delta_text(&bare).contains("Which tasks and Workspaces"));
+            assert!(driver.screen().contains("/skill:ovrcr-coordinator"));
+            let requests = provider.requests();
+            let user = operator_provider::last_user_text(&requests.last().unwrap().body);
+            assert!(user.contains(include_str!("../pi/skills/ovrcr-coordinator/SKILL.md")));
+            assert!(
+                user.ends_with("User request:\n"),
+                "bare selection invents no user task"
+            );
+            assert_eq!(
+                operator_provider::non_system_text(&requests.last().unwrap().body)
+                    .matches(document)
+                    .count(),
+                1,
+                "resume preserves the original instruction message without replay"
+            );
+            for text in ["/etc/hosts", " /new", "ordinary /skill:missing data"] {
+                driver.submit(text);
+                wait_terminal(&mut driver, opened.id, &provider, &live);
+                wait_stopped(&mut driver, opened.id);
+                let requests = provider.requests();
+                let user = operator_provider::last_user_text(&requests.last().unwrap().body);
+                assert!(user.starts_with("Captured OVRCR context"));
+                assert!(user.ends_with(&format!("User request:\n{text}")), "{user}");
+                assert!(!user.contains("Selected Operator skill:"));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE and a loopback provider; opt in explicitly"]
+    fn installed_pi_operator_skills_picker() {
+        let pi = pi_executable();
+        for quick in [false, true] {
+            let live = live::Live::idle().bounded();
+            let provider = Provider::start(scenario_handler(
+                live.repo.clone(),
+                live.root.path().join("marker"),
+                live.root.path().join("background"),
+            ));
+            provider.seed_profile(&live.config);
+            install_personal_skill(live.root.path());
+            live.start_binary_env(&[("OVRCR_PI_EXECUTABLE", pi.as_os_str())]);
+            live.ready("skill-picker");
+            let (target, _owner) = status_agent(&live, "status-unavailable");
+            let before = status_cli(&live, &["terminal", "list"]);
+            let mut driver = DashboardDriver::connect(&live);
+            driver.dashboard.install_focus(target);
+            if quick {
+                driver.quick("/skills GUI_SKILLS_REQUEST");
+            } else {
+                driver.open();
+                driver.submit("/skills GUI_SKILLS_REQUEST");
+            }
+            let conversation = driver.conversation();
+            let screen = driver.screen();
+            assert!(screen.contains("Operator skills"), "{screen}");
+            for skill in ovrcr_protocol::operator::skills::BUNDLED_SKILLS {
+                assert!(
+                    screen.contains(skill.name),
+                    "{} missing: {screen}",
+                    skill.name
+                );
+            }
+            assert!(!screen.contains("personal-sentinel") && !screen.contains("project-sentinel"));
+            assert!(provider.requests().is_empty());
+            assert!(conversation.current_turn.is_none());
+            driver
+                .dashboard
+                .event_action(Event::Paste("INVENTORY".into()));
+            let filtered = driver.screen();
+            assert!(
+                filtered.contains("ovrcr-status") && !filtered.contains("ovrcr-coordinator"),
+                "{filtered}"
+            );
+            driver.dashboard.key(KeyCode::Esc);
+            assert!(driver.screen().contains("/skills GUI_SKILLS_REQUEST"));
+            driver.dashboard.key(KeyCode::Enter);
+            driver
+                .dashboard
+                .event_action(Event::Paste("ovrcr-status".into()));
+            driver.dashboard.key(KeyCode::Enter);
+            driver.flush();
+            assert!(
+                driver
+                    .screen()
+                    .contains("/skill:ovrcr-status GUI_SKILLS_REQUEST")
+            );
+            assert!(provider.requests().is_empty(), "choosing must not prompt");
+            assert!(driver.conversation().current_turn.is_none());
+            assert!(
+                !live
+                    .root
+                    .path()
+                    .join("status-unavailable.identity.input")
+                    .exists()
+            );
+            driver.dashboard.key(KeyCode::Enter);
+            driver.flush();
+            let history = wait_terminal(&mut driver, conversation.id, &provider, &live);
+            wait_stopped(&mut driver, conversation.id);
+            assert!(delta_text(&history).contains("SKILLS_PICKER_DONE"));
+            let requests = provider.requests();
+            assert_eq!(requests.len(), 1);
+            let user = operator_provider::last_user_text(&requests[0].body);
+            let document = include_str!("../pi/skills/ovrcr-status/SKILL.md");
+            assert!(user.starts_with("Captured OVRCR context"));
+            assert!(
+                user.find(document).unwrap()
+                    < user.find("User request:\nGUI_SKILLS_REQUEST").unwrap()
+            );
+            let (context, selection) = history
+                .messages
+                .iter()
+                .find_map(|message| match &message.content {
+                    OperatorMessageContent::User {
+                        text,
+                        context,
+                        skill,
+                    } if text == "GUI_SKILLS_REQUEST" => Some((context, skill)),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(context.session, Some(target));
+            assert_eq!(context.workspace_id.as_deref(), Some("work"));
+            assert_eq!(
+                context.cwd.as_deref(),
+                Some(live.workspace_path("work").as_path())
+            );
+            assert_eq!(
+                selection.as_ref().unwrap(),
+                &ovrcr_protocol::OperatorSkillSelection::named("ovrcr-status").unwrap()
+            );
+            assert!(user.contains(&serde_json::to_string(context).unwrap()));
+            assert_explicit_selection_refused(&mut driver, &provider);
+            driver.submit("/skill:unavailable GUI_SKILLS_UNSENT");
+            let screen = driver.screen();
+            assert!(
+                screen.contains("unavailable Operator skill")
+                    && screen.contains("GUI_SKILLS_UNSENT"),
+                "{screen}"
+            );
+            assert_eq!(provider.requests().len(), 1);
+            assert!(
+                !live
+                    .root
+                    .path()
+                    .join("status-unavailable.identity.input")
+                    .exists()
+            );
+            let after = status_cli(&live, &["terminal", "list"]);
+            for row in before.as_array().unwrap() {
+                assert_eq!(
+                    after
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|after| after["id"] == row["id"])
+                        .unwrap(),
+                    row
+                );
+            }
+            eprintln!(
+                "SKILLS_PICKER_PASS quick={quick} model_requests=1 selection_and_cancel_requests=0 target={}",
+                target.0
+            );
+        }
+    }
+
+    fn assert_explicit_selection_refused(driver: &mut DashboardDriver, provider: &Provider) {
+        let before = driver.conversation();
+        let count = provider.requests().len();
+        for (name, revision) in [
+            ("ovrcr-status", 0),
+            ("ovrcr-status", 999),
+            ("not-shipped", 1),
+        ] {
+            let response = driver.exchange(Request::Operator(OperatorRequest::Submit {
+                conversation: before.id,
+                expected_run: before.run,
+                text: "DO_NOT_RUN".into(),
+                context: Default::default(),
+                skill: Some(ovrcr::protocol::OperatorSkillSelection {
+                    name: name.into(),
+                    revision,
+                }),
+            }));
+            assert!(matches!(response, Response::Error { .. }), "{response:?}");
+            assert_eq!(driver.conversation().current_turn, before.current_turn);
+            assert_eq!(
+                provider.requests().len(),
+                count,
+                "refusal before model work"
+            );
+        }
     }
 
     /// The bundled CLI skill is system-only in the first request of both entry
@@ -6820,8 +9471,14 @@ PY"#
             .is_some_and(|value| !value.is_empty());
         let slash =
             std::env::var_os("OVRCR_OPERATOR_GUI_SLASH").is_some_and(|value| !value.is_empty());
+        let workspaces = std::env::var_os("OVRCR_OPERATOR_GUI_WORKSPACES")
+            .is_some_and(|value| !value.is_empty());
         assert!(
-            usize::from(compaction) + usize::from(coordinator) + usize::from(slash) <= 1,
+            usize::from(compaction)
+                + usize::from(coordinator)
+                + usize::from(slash)
+                + usize::from(workspaces)
+                <= 1,
             "run one GUI provider mode at a time"
         );
         let provider = Provider::start(scenario_handler_mode(
@@ -6832,6 +9489,7 @@ PY"#
                 hold_compaction: compaction,
                 inflate_compaction_turn: compaction,
                 coordinator,
+                workspaces,
             },
         ));
         if compaction {
@@ -6840,7 +9498,7 @@ PY"#
                 COMPACTION_CONTEXT_WINDOW,
                 Some(json!({"enabled": true, "reserveTokens": 0, "keepRecentTokens": 0})),
             );
-        } else if slash {
+        } else if slash || workspaces {
             provider.seed_profile_with(
                 &root,
                 200_000,
@@ -6849,7 +9507,7 @@ PY"#
         } else {
             provider.seed_profile(&root);
         }
-        if coordinator {
+        if coordinator || workspaces {
             let token = std::env::var("OVRCR_OPERATOR_GUI_TOKEN")
                 .expect("gui_root validated OVRCR_OPERATOR_GUI_TOKEN");
             let home = gui_private_workspace_home(std::env::var_os("HOME"), &token)
@@ -6863,13 +9521,15 @@ PY"#
                 "clear inherited PI_CODING_AGENT_DIR before starting the GUI"
             );
             provider.seed_workspace_profile(&home);
-            let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
-            eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+            if coordinator {
+                let sessions = create_gui_coordinator_sessions(&root, &pi_executable());
+                eprintln!("OPERATOR_PI_GUI_COORDINATOR_SESSIONS {sessions}");
+            }
         }
         let _ = std::fs::remove_file(&release_marker);
         let _ = std::fs::remove_file(&stop_marker);
         println!(
-            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator}",
+            "OPERATOR_PI_GUI_READY base={} root={} compaction={compaction} coordinator={coordinator} workspaces={workspaces}",
             provider.base,
             root.display()
         );

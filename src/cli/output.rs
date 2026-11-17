@@ -87,7 +87,7 @@ pub(super) fn terminal_value(
         ovrcr::protocol::SessionKind::Terminal => json!("terminal"),
         ovrcr::protocol::SessionKind::Agent { name } => json!({"agent": name}),
     };
-    json!({
+    let mut value = json!({
         "scope": session.scope,
         "id": session.id.0,
         "archived": session.archived,
@@ -128,7 +128,11 @@ pub(super) fn terminal_value(
                 !session.phase.is_live(),
             )
         }),
-    })
+    });
+    if let Some(control) = &session.assignment_control {
+        value["assignment_control"] = json!(control);
+    }
+    value
 }
 
 pub(super) fn reporting_unavailable(session: &SessionSummary) -> Option<bool> {
@@ -455,6 +459,34 @@ mod tests {
                 "context_usage": null, "context_stale": null,
             })
         );
+    }
+
+    #[test]
+    fn terminal_value_exposes_assigned_control_without_changing_legacy_fields() {
+        use ovrcr::protocol::{AssignmentControl, AssignmentControlView, ControlOwner};
+        let mut session = summary(SessionScope::Workspace);
+        let legacy = terminal_value(&session, 0, None);
+        for owner in [
+            ControlOwner::Controller,
+            ControlOwner::Human,
+            ControlOwner::Uncertain,
+        ] {
+            session.assignment_control = Some(AssignmentControlView {
+                handle: "assigned-fixture".into(),
+                control: AssignmentControl {
+                    owner,
+                    ..Default::default()
+                },
+                evidence: None,
+            });
+            let mut value = terminal_value(&session, 0, None);
+            assert_eq!(
+                value["assignment_control"],
+                serde_json::to_value(&session.assignment_control).unwrap()
+            );
+            value.as_object_mut().unwrap().remove("assignment_control");
+            assert_eq!(value, legacy);
+        }
     }
 
     #[test]

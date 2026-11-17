@@ -14,7 +14,7 @@ export OVRCR_EXECUTABLE="$(command -v ovrcr)"
 "$OVRCR_EXECUTABLE" --version
 ```
 
-OVRCR Operator is different: `OVRCR_EXECUTABLE` is already set to the matching binary. Use it exactly as inherited; do not run that export, do not resolve a PATH-selected alternate, and do not fall back to a default instance. Preserve the inherited `OVRCR_HOME`, `OVRCR_CONFIG` and `OVRCR_SOCKET`, and use only the exact project, workspace, session and run identities captured in the message. A `cargo run` from a checkout can speak a different protocol than the server that is already running. Pass `--json` on any command whose output you will parse. Run `"$OVRCR_EXECUTABLE" <command> --help` for flags this page does not need.
+OVRCR Operator is different: `OVRCR_EXECUTABLE` is already set to the matching binary. Use it exactly as inherited; do not run that export, do not resolve a PATH-selected alternate, and do not fall back to a default instance. Preserve the inherited `OVRCR_HOME`, `OVRCR_CONFIG` and `OVRCR_SOCKET`. Status overviews and general Cleanup proposals cover all registered Projects by default and honor explicitly narrower requests; resolve inspected identities from current inventory and state the scope. Use `ovrcr-cleanup` for proposal-first housekeeping, exact approved stopped-record archives and separately approved clean Workspace removals; approval cannot fall back to generic mutation commands. Actions on a captured target use its exact project, workspace, session and run identities. A `cargo run` from a checkout can speak a different protocol than the server that is already running. Pass `--json` on any command whose output you will parse. Run `"$OVRCR_EXECUTABLE" <command> --help` for flags this page does not need.
 
 The full contract is `docs/cli-reference.md` in the ovrcr source repository.
 
@@ -39,14 +39,14 @@ Done when the JSON names the repo. Register a repository only when the user aske
 "$OVRCR_EXECUTABLE" project add NAME /absolute/repo --workspace-root /absolute/worktrees
 ```
 
-Registration creates the protected root workspace on the detected default branch. Whether it also starts a `local` shell follows `automatic_local_terminals` in `dashboard.toml` (default **default branch only**).
+Registration records the protected Root workspace on its current checkout branch; it never switches Git branches. New Root launches are blocked while it is off the repository's default branch. On that default branch, an initial `local` shell follows `automatic_local_terminals` in `dashboard.toml` (default **default branch only**).
 
 ## 2. Create a workspace
 
-A new branch needs `--base`. Read the repository's default branch and pass that name. An existing local branch uses `--branch` and takes no `--base`. The workspace's name is the branch, slashes included.
+Inspect existing Workspaces first and reuse a suitable checkout. A new branch needs an explicitly chosen `--base`; ask the user if it is missing rather than guessing the default branch. An existing local branch uses `--branch` and takes no `--base`. The workspace's name is its current branch, slashes included. Ambiguous or detached targets need the user's exact checkout choice; use `workspace get --project NAME --path PATH` and `terminal create --project NAME --path PATH` after resolution.
 
 ```sh
-"$OVRCR_EXECUTABLE" workspace create --project NAME --new-branch temp/topic --base DEFAULT --json
+"$OVRCR_EXECUTABLE" workspace create --project NAME --new-branch temp/topic --base BASE --json
 "$OVRCR_EXECUTABLE" workspace create --project NAME --branch existing/branch --json
 "$OVRCR_EXECUTABLE" workspace get --project NAME --branch temp/topic --json
 ```
@@ -126,12 +126,19 @@ Done when the reply is visible, or when you stop because the screen is a menu, t
 A new workspace and its `local` shell stay up. Close a terminal, remove a workspace, or shut the server down only when the user asked. Live sessions and a dirty worktree block `workspace remove`. The root workspace cannot be removed.
 
 ```sh
-"$OVRCR_EXECUTABLE" terminal close ID
+"$OVRCR_EXECUTABLE" terminal close ID --expected-run RUN
 "$OVRCR_EXECUTABLE" workspace remove --project NAME --branch BRANCH
 ```
 
+For requested session control, capture `run` from `terminal list --json` and pass
+`--expected-run RUN` to `pause`, `resume`, `kill`, `terminal close` or
+`terminal reopen`. A changed run is refused at Server admission. Fenced Agent
+reopen requires certified recovery, never a picker or ownership acknowledgement;
+Terminal reopen starts a fresh shell. Confirm `recovery.attached` before claiming
+Conversation resume. Built-in Operator uses `ovrcr-session-care` for the procedure.
+
 ## When a command fails
 
-- `OVRCR server is not running`: project and workspace reads can continue offline. Kill, close, remove, send, and keystroke need the server. `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`, `project add`, `workspace create`, and the dashboard start one.
+- `OVRCR server is not running`: project and workspace reads can continue offline. Kill, close, remove, send, and keystroke need the server. `new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`, `project add`, `workspace create`, and the dashboard start one. Fenced `terminal reopen --expected-run` instead requires the existing Server.
 - `protocol version mismatch`: the binary and the running server differ. Report the versions. Restart the server only when the user asked. `"$OVRCR_EXECUTABLE" shutdown --kill` stops their live sessions.
 - `agent admission unavailable`: relaunch through `agent run` without print mode or flags outside the eligible set. The interactive composer is the session to keep.

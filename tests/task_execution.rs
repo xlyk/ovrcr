@@ -67,6 +67,7 @@ while True:
             .env("OVRCR_HOME", self.root.path())
             .env("OVRCR_SOCKET", self.root.path().join("server.sock"))
             .env("OVRCR_PI_EXECUTABLE", self.root.path().join("pi-fixture"))
+            .env("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"))
             .output()
             .unwrap()
     }
@@ -125,6 +126,22 @@ while True:
     }
 }
 impl Fixture {
+    fn stopped_archive_candidate(&self, cwd: &std::path::Path) -> (String, String) {
+        let row = self.call(&[
+            "terminal",
+            "create",
+            "--project",
+            "fixture",
+            "--path",
+            cwd.to_str().unwrap(),
+            "--name",
+            "archive-proof",
+        ]);
+        let id = row["id"].as_u64().unwrap().to_string();
+        let run = row["run"].as_u64().unwrap().to_string();
+        self.call(&["terminal", "kill", &id, "--expected-run", &run]);
+        (id, run)
+    }
     fn run_dir(&self, id: &str) -> std::path::PathBuf {
         self.root.path().join("tasks/runs").join(id)
     }
@@ -439,6 +456,22 @@ fn git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup() {
         .is_empty(),
         "task preparation must not start a shell"
     );
+    let (session, session_run) = f.stopped_archive_candidate(cwd);
+    let blocked = f.raw(&[
+        "--json",
+        "terminal",
+        "archive-stopped",
+        &session,
+        "--expected-run",
+        &session_run,
+    ]);
+    assert!(
+        !blocked.status.success(),
+        "completed task ownership must protect retained work"
+    );
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("retained task ownership"));
+    // Explicit ordinary close keeps its existing semantics; this is not cleanup approval.
+    f.call(&["terminal", "close", &session]);
     assert!(
         !f.raw(&["run", "clean", &id, "--yes"]).status.success(),
         "dirty worktree must be retained"
@@ -678,7 +711,16 @@ fn git_run_cleanup_rejects_a_workspace_that_preexisted_preparation() {
             folder != "task-1-run-1",
             "cleanup claimed another workspace"
         );
-        assert!(f.root.path().join("workspaces").join(folder).is_dir());
+        let unrelated = f.root.path().join("workspaces").join(folder);
+        assert!(unrelated.is_dir());
+        let (session, session_run) = f.stopped_archive_candidate(&unrelated);
+        f.call(&[
+            "terminal",
+            "archive-stopped",
+            &session,
+            "--expected-run",
+            &session_run,
+        ]);
         f.call(&[
             "workspace",
             "get",
@@ -780,6 +822,27 @@ fn git_run_cleanup_rejects_a_replacement_workspace_after_cleanup() {
             "old run claimed its replacement workspace"
         );
         assert!(replacement.is_dir());
+        let released = f.call(&["run", "get", &id]);
+        assert!(released["workspace"].is_null());
+        assert_eq!(
+            released["directory"], run["directory"],
+            "release preserves the historical path, not ownership"
+        );
+        let (session, session_run) = f.stopped_archive_candidate(&replacement);
+        f.call(&[
+            "terminal",
+            "archive-stopped",
+            &session,
+            "--expected-run",
+            &session_run,
+        ]);
+        assert!(
+            f.call(&["terminal", "list", "--archived"])
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"].as_u64().unwrap().to_string() == session)
+        );
         f.call(&[
             "workspace",
             "get",

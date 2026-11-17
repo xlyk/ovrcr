@@ -2197,6 +2197,385 @@ fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() 
 }
 
 #[test]
+fn approved_workspace_removal_requires_separate_archive_and_preserves_context() {
+    let live = Live::binary();
+    live.ready("feature/approved-removal");
+    track_groups(&live);
+    let path = live.workspace_path(live::WORKSPACE);
+    let path_arg = path.to_str().unwrap();
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "kill", &row["id"].to_string()]);
+    }
+    let preview = [
+        "workspace",
+        "removal-preview",
+        "--project",
+        live::PROJECT,
+        "--path",
+        path_arg,
+    ];
+    let blocked = cli(&live, &preview);
+    assert!(!blocked.status.success());
+    assert!(
+        String::from_utf8_lossy(&blocked.stderr).contains("separate archive"),
+        "{blocked:?}"
+    );
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(
+            &live,
+            &[
+                "terminal",
+                "archive-stopped",
+                &row["id"].to_string(),
+                "--expected-run",
+                &row["run"].to_string(),
+            ],
+        );
+    }
+    let before = json(&live, &["terminal", "list", "--archived"]);
+    let expected = json(&live, &preview).to_string();
+    assert!(path.is_dir(), "preview must not mutate");
+    json(
+        &live,
+        &["workspace", "remove-approved", "--expected", &expected],
+    );
+    assert!(!path.exists());
+    assert!(
+        json(&live, &["workspace", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["path"] != path_arg)
+    );
+    live::git(
+        &live.repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "refs/heads/feature/approved-removal",
+        ],
+    );
+    let after = json(&live, &["terminal", "list", "--archived"]);
+    for original in before.as_array().unwrap() {
+        let retained = after
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == original["id"])
+            .unwrap();
+        for field in ["id", "run", "cwd", "project", "title", "conversation"] {
+            assert_eq!(retained[field], original[field], "{field}");
+        }
+    }
+    assert!(
+        !cli(
+            &live,
+            &["workspace", "remove-approved", "--expected", &expected]
+        )
+        .status
+        .success(),
+        "missing original checkout requires reconciliation, not replay"
+    );
+}
+
+#[test]
+fn approved_workspace_removal_rejects_changed_checkout_occupancy_and_dirty_wip() {
+    use ovrcr::protocol::{ErrorCode, Request, Response, WorkspaceRemovalObservation};
+    let live = Live::binary();
+    live.ready("feature/approval-races");
+    track_groups(&live);
+    let path = live.workspace_path(live::WORKSPACE);
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "close", &row["id"].to_string()]);
+    }
+    let Response::WorkspaceRemoval(expected) = live.request(Request::PreviewWorkspaceRemoval {
+        project: live::PROJECT.into(),
+        workspace: live::WORKSPACE.into(),
+    }) else {
+        panic!("eligible preview")
+    };
+    let remove = Request::RemoveApprovedWorkspace(expected.clone());
+    // A changed clean HEAD is not the originally approved state.
+    live::git(
+        &path,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "new work",
+        ],
+    );
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    live::git(&path, &["reset", "--hard", &expected.head]);
+    live::git(&path, &["switch", "-c", "replacement-label"]);
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    live::git(&path, &["switch", "feature/approval-races"]);
+    // WIP autosaving must never turn cleanup permission into a commit or push.
+    json(&live, &["settings", "set", "save_uncommitted_work", "true"]);
+    std::fs::write(path.join("uncommitted"), "keep me").unwrap();
+    let refs = live::git(&live.repo, &["show-ref"]);
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::DirtyWorktree,
+            ..
+        }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(path.join("uncommitted")).unwrap(),
+        "keep me"
+    );
+    assert_eq!(live::git(&live.repo, &["show-ref"]), refs);
+    std::fs::remove_file(path.join("uncommitted")).unwrap();
+    let occupied = create_terminal(&live, "new-occupant", &["/bin/sh"]);
+    let id = occupied["id"].to_string();
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    json(&live, &["terminal", "close", &id]);
+    assert!(
+        matches!(
+            live.request(remove.clone()),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "new archived occupant still invalidates original proposal"
+    );
+    // Even a newly registered Workspace reusing the id/path/branch needs new approval.
+    let Response::WorkspaceRemoval(reapproved) = live.request(Request::PreviewWorkspaceRemoval {
+        project: live::PROJECT.into(),
+        workspace: live::WORKSPACE.into(),
+    }) else {
+        panic!("new independent proposal")
+    };
+    assert_eq!(
+        live.request(Request::RemoveWorkspace {
+            project: live::PROJECT.into(),
+            name: live::WORKSPACE.into(),
+            force: false
+        }),
+        Response::Ok
+    );
+    json(
+        &live,
+        &["settings", "set", "automatic_local_terminals", "off"],
+    );
+    assert_eq!(
+        live.request(Request::CreateWorkspace {
+            project: live::PROJECT.into(),
+            id: live::WORKSPACE.into(),
+            branch: ovrcr::protocol::BranchRequest::Existing {
+                branch: "feature/approval-races".into()
+            }
+        }),
+        Response::Ok
+    );
+    assert_eq!(live.workspace_path(live::WORKSPACE), path);
+    assert!(matches!(
+        live.request(Request::RemoveApprovedWorkspace(reapproved)),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    // Unregistered Git replacement at that same path is independently refused.
+    live::git(&live.repo, &["worktree", "remove", path.to_str().unwrap()]);
+    live::git(
+        &live.repo,
+        &[
+            "worktree",
+            "add",
+            path.to_str().unwrap(),
+            "feature/approval-races",
+        ],
+    );
+    assert!(matches!(
+        live.request(remove),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert!(path.is_dir());
+    assert!(matches!(
+        live.request(Request::PreviewWorkspaceRemoval {
+            project: live::PROJECT.into(),
+            workspace: live::PROJECT.into()
+        }),
+        Response::Error { .. }
+    ));
+    let mut altered: WorkspaceRemovalObservation = *expected;
+    altered.workspace.id = "unknown".into();
+    assert!(matches!(
+        live.request(Request::RemoveApprovedWorkspace(Box::new(altered))),
+        Response::Error { .. }
+    ));
+}
+
+#[test]
+fn approved_workspace_removal_preserves_git_refusal_and_partial_commit_evidence() {
+    use ovrcr::protocol::{ErrorCode, Request, Response};
+    let live = Live::binary();
+    live.ready("feature/approved-partial");
+    track_groups(&live);
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "close", &row["id"].to_string()]);
+    }
+    let path = live.workspace_path(live::WORKSPACE);
+    let Response::WorkspaceRemoval(expected) = live.request(Request::PreviewWorkspaceRemoval {
+        project: live::PROJECT.into(),
+        workspace: live::WORKSPACE.into(),
+    }) else {
+        panic!("eligible preview")
+    };
+    let remove = Request::RemoveApprovedWorkspace(expected);
+    let before = json(&live, &["terminal", "list", "--archived"]);
+    live::git(&live.repo, &["worktree", "lock", path.to_str().unwrap()]);
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error { .. }
+    ));
+    assert!(path.exists());
+    assert_eq!(json(&live, &["terminal", "list", "--archived"]), before);
+    live::git(&live.repo, &["worktree", "unlock", path.to_str().unwrap()]);
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.execute_batch("CREATE TABLE commit_guard (id INTEGER REFERENCES retained_sessions(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER reject_remove AFTER DELETE ON workspaces BEGIN INSERT INTO commit_guard VALUES (-1); END;").unwrap();
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::PartialFailure,
+            ..
+        }
+    ));
+    assert!(!path.exists());
+    let mut unavailable = before;
+    for row in unavailable.as_array_mut().unwrap() {
+        row["workspace"] = Value::String(ovrcr::git::UNAVAILABLE_CHECKOUT.into());
+    }
+    assert_eq!(
+        json(&live, &["terminal", "list", "--archived"]),
+        unavailable
+    );
+    assert!(
+        json(&live, &["workspace", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == live::WORKSPACE),
+        "metadata must remain for reconciliation"
+    );
+    assert!(
+        matches!(
+            live.request(remove),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "original uncertain action cannot prune missing evidence on replay"
+    );
+    live::git(
+        &live.repo,
+        &["rev-parse", "--verify", "feature/approved-partial"],
+    );
+}
+
+#[test]
+fn approved_workspace_removal_rechecks_archived_ownership_and_ignored_history() {
+    use ovrcr::protocol::{ConversationReference, ExtensionConversation, Request, Response};
+    let live = Live::binary();
+    live.ready("feature/approved-history");
+    track_groups(&live);
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "close", &row["id"].to_string()]);
+    }
+    let Response::WorkspaceRemoval(expected) = live.request(Request::PreviewWorkspaceRemoval {
+        project: live::PROJECT.into(),
+        workspace: live::WORKSPACE.into(),
+    }) else {
+        panic!("eligible preview")
+    };
+    let path = live.workspace_path(live::WORKSPACE);
+    let history = path.join("ignored/history.jsonl");
+    std::fs::create_dir(history.parent().unwrap()).unwrap();
+    std::fs::write(&history, "provider-owned history\n").unwrap();
+    std::fs::write(live.repo.join(".git/info/exclude"), "ignored/\n").unwrap();
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let id = i64::try_from(expected.archived_sessions[0].0.0).unwrap();
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let reference = ConversationReference::Pi(ExtensionConversation {
+        conversation: "approved-history".into(),
+        executable: "/bin/pi".into(),
+        history: Some(history.clone()),
+        config_dir: live.root.path().into(),
+        options: vec![],
+    });
+    db.execute(
+        "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, 0)",
+        rusqlite::params![id, serde_json::to_string(&reference).unwrap()],
+    )
+    .unwrap();
+    live.start_binary();
+    assert!(
+        matches!(live.request(Request::RemoveApprovedWorkspace(expected.clone())), Response::Error { message, .. } if message.contains("provider history"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(&history).unwrap(),
+        "provider-owned history\n"
+    );
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    db.execute("DELETE FROM agent_conversations WHERE session = ?1", [id])
+        .unwrap();
+    db.execute(
+        "UPDATE retained_sessions SET stopped = 0 WHERE id = ?1",
+        [id],
+    )
+    .unwrap();
+    live.start_binary();
+    assert!(
+        matches!(live.request(Request::RemoveApprovedWorkspace(expected)), Response::Error { message, .. } if message.contains("archived") && message.contains("unacknowledged"))
+    );
+    assert!(path.exists());
+    let root = ovrcr::config::load_registry(&live.config)
+        .unwrap()
+        .project(live::PROJECT)
+        .unwrap()
+        .workspaces
+        .iter()
+        .find(|w| w.path == live.repo.canonicalize().unwrap())
+        .unwrap()
+        .id
+        .clone();
+    assert!(
+        matches!(live.request(Request::PreviewWorkspaceRemoval { project: live::PROJECT.into(), workspace: root }), Response::Error { message, .. } if message.contains("repository-root"))
+    );
+}
+
+#[test]
 fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_failures() {
     use ovrcr::protocol::{ErrorCode, Request, Response};
     let live = Live::binary();

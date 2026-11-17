@@ -29,6 +29,255 @@ fn summary() -> OperatorConversationSummary {
     }
 }
 
+#[test]
+fn explicit_skill_send_keeps_the_captured_target_in_both_entry_points() {
+    for quick in [false, true] {
+        let mut dashboard = dashboard_fixture();
+        let hierarchy = fixture_hierarchy();
+        let target = captured_context(&hierarchy, SessionId(1));
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.install_focus(SessionId(1));
+        open_and_settle(&mut dashboard, summary());
+        if quick {
+            dashboard.ctrl('o');
+        }
+        dashboard.event_action(Event::Paste(
+            "/skill:ovrcr-status inspect captured target".into(),
+        ));
+        dashboard.key(KeyCode::Enter);
+        // A later pane selection cannot rewrite the already accepted Send's outbox payload.
+        dashboard.install_focus(SessionId(3));
+        let out = dashboard.drain_outbox();
+        assert_eq!(
+            operator_requests(&out),
+            [&OperatorRequest::Submit {
+                conversation: OperatorConversationId(7),
+                expected_run: SessionRunId(1),
+                text: "inspect captured target".into(),
+                context: target,
+                skill: Some(ovrcr_protocol::OperatorSkillSelection::named("ovrcr-status").unwrap()),
+            }]
+        );
+        assert!(!out.iter().any(|message| matches!(
+            message.request,
+            Request::Input { .. } | Request::AssignedHumanInput { .. }
+        )));
+    }
+}
+
+#[test]
+fn skills_picker_preserves_shared_request_and_target_until_send() {
+    for quick in [false, true] {
+        let mut d = dashboard_fixture();
+        let hierarchy = fixture_hierarchy();
+        let target = captured_context(&hierarchy, SessionId(1));
+        d.install_hierarchy(hierarchy);
+        d.install_focus(SessionId(1));
+        open_and_settle(&mut d, summary());
+        if quick {
+            d.key(KeyCode::Esc);
+            d.ctrl('o');
+        }
+        d.event_action(Event::Paste("inspect captured target".into()));
+        d.key(KeyCode::Home);
+        d.event_action(Event::Paste("/skills ".into()));
+        d.key(KeyCode::End);
+        if quick {
+            // An underlying selection change must not recapture this draft.
+            d.install_focus(SessionId(3));
+        }
+        d.key(KeyCode::Enter);
+        // Quick may open the full conversation, but never starts a worker.
+        let out = d.drain_outbox();
+        for message in &out {
+            if matches!(message.request, Request::Operator(OperatorRequest::Open)) {
+                let follow = respond(
+                    &mut d,
+                    message.request_id,
+                    OperatorResponse::Opened(summary()),
+                );
+                for read in follow {
+                    if matches!(
+                        read.request,
+                        Request::Operator(OperatorRequest::Read { .. })
+                    ) {
+                        respond(
+                            &mut d,
+                            read.request_id,
+                            history_of(summary(), Vec::new(), None),
+                        );
+                    }
+                }
+            }
+        }
+        assert!(out.iter().all(|m| !matches!(
+            m.request,
+            Request::Operator(OperatorRequest::Submit { .. })
+                | Request::Input { .. }
+                | Request::AssignedHumanInput { .. }
+        )));
+        let screen = draw_text(&mut d, 140, 35);
+        assert!(screen.contains("Operator skills"), "{screen}");
+        assert!(
+            screen.contains("ovrcr-status") && screen.contains("ovrcr-coordinator"),
+            "{screen}"
+        );
+        d.event_action(Event::Paste("INVENTORY".into()));
+        let filtered = draw_text(&mut d, 140, 35);
+        assert!(
+            filtered.contains("ovrcr-status") && !filtered.contains("ovrcr-coordinator"),
+            "{filtered}"
+        );
+        d.key(KeyCode::Esc);
+        let cancelled = draw_text(&mut d, 140, 35);
+        assert!(
+            cancelled.contains("/skills inspect captured target"),
+            "{cancelled}"
+        );
+        d.key(KeyCode::Enter);
+        d.event_action(Event::Paste("ovrcr-status".into()));
+        d.key(KeyCode::Enter);
+        assert!(d.drain_outbox().iter().all(|m| !matches!(
+            m.request,
+            Request::Operator(OperatorRequest::Submit { .. }) | Request::Input { .. }
+        )));
+        assert!(draw_text(&mut d, 140, 35).contains("/skill:ovrcr-status inspect captured target"));
+        d.key(KeyCode::Enter);
+        assert_eq!(
+            operator_requests(&d.drain_outbox()),
+            [&OperatorRequest::Submit {
+                conversation: OperatorConversationId(7),
+                expected_run: SessionRunId(1),
+                text: "inspect captured target".into(),
+                context: target,
+                skill: Some(ovrcr_protocol::OperatorSkillSelection::named("ovrcr-status").unwrap()),
+            }]
+        );
+    }
+}
+
+#[test]
+fn skills_picker_slash_menu_prepares_a_bare_invocation() {
+    let mut d = dashboard_fixture();
+    open_and_settle(&mut d, summary());
+    d.event_action(Event::Paste("/sk".into()));
+    assert!(draw_text(&mut d, 140, 35).contains("Browse shipped skills"));
+    d.key(KeyCode::Enter);
+    d.event_action(Event::Paste("ovrcr-status".into()));
+    d.key(KeyCode::Enter);
+    assert!(d.drain_outbox().is_empty());
+    d.key(KeyCode::Enter);
+    assert!(matches!(operator_requests(&d.drain_outbox()).as_slice(),
+        [OperatorRequest::Submit { text, skill: Some(skill), .. }] if text.is_empty() && skill.name == "ovrcr-status"));
+}
+
+#[test]
+fn skills_picker_cold_quick_mouse_cancel_and_busy_layouts() {
+    for value in [summary(), busy(), stop_unconfirmed()] {
+        let mut d = dashboard_fixture();
+        d.install_hierarchy(fixture_hierarchy());
+        d.install_focus(SessionId(1));
+        d.ctrl('o');
+        d.event_action(Event::Paste("/skills keep this request".into()));
+        d.key(KeyCode::Enter);
+        let out = d.drain_outbox();
+        assert_eq!(operator_requests(&out), [&OperatorRequest::Open]);
+        let follow = respond(
+            &mut d,
+            out.iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Open)))
+                .unwrap()
+                .request_id,
+            OperatorResponse::Opened(value.clone()),
+        );
+        let read = read_request(&follow);
+        respond(
+            &mut d,
+            read.request_id,
+            history_of(value.clone(), Vec::new(), None),
+        );
+        for (cols, rows) in [(80, 24), (60, 24), (60, 16), (25, 8), (1, 1)] {
+            let screen = draw_text(&mut d, cols, rows);
+            if cols >= 60 {
+                assert!(
+                    screen.contains("Operator skills") && screen.contains("ovrcr-status"),
+                    "{cols}x{rows}: {screen}"
+                );
+                assert!(
+                    screen.contains("prepare") && screen.contains("close"),
+                    "{screen}"
+                );
+            }
+            assert!(d.drain_outbox().is_empty());
+        }
+        draw_text(&mut d, 80, 24);
+        // Outside dismissal is consumed, leaving the draft, not terminal input.
+        assert!(!matches!(
+            d.event_action(Event::Mouse(mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                0,
+                KeyModifiers::NONE
+            ))),
+            DashboardAction::PtyBytes(_)
+        ));
+        assert!(draw_text(&mut d, 140, 35).contains("/skills keep this request"));
+        d.key(KeyCode::Enter);
+        d.event_action(Event::Paste("NOT-SHIPPED".into()));
+        assert!(draw_text(&mut d, 80, 24).contains("No shipped skills match"));
+        d.key(KeyCode::Enter);
+        assert!(d.drain_outbox().is_empty());
+        d.ctrl('c');
+        d.event_action(Event::Paste("ovrcr-status".into()));
+        let lines = draw_text(&mut d, 80, 24);
+        let row = lines
+            .lines()
+            .position(|line| line.contains("ovrcr-status") && !line.contains("Filter:"))
+            .unwrap() as u16;
+        assert!(!matches!(
+            d.event_action(Event::Mouse(mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                5,
+                row,
+                KeyModifiers::NONE
+            ))),
+            DashboardAction::PtyBytes(_)
+        ));
+        assert!(d.drain_outbox().is_empty());
+        assert!(draw_text(&mut d, 140, 35).contains("/skill:ovrcr-status keep this request"));
+        d.key(KeyCode::Enter);
+        let out = d.drain_outbox();
+        if !value.worker_stopped {
+            assert!(out.is_empty());
+            let screen = draw_text(&mut d, 140, 35);
+            assert!(
+                screen.contains(BUSY_REASON)
+                    && screen.contains("/skill:ovrcr-status keep this request"),
+                "{screen}"
+            );
+        } else {
+            let submit = out
+                .iter()
+                .find(|m| matches!(m.request, Request::Operator(OperatorRequest::Submit { .. })))
+                .unwrap();
+            d.handle_server_message(ServerMessage::Response {
+                request_id: submit.request_id,
+                response: Response::Error {
+                    code: ovrcr_protocol::ErrorCode::InvalidRequest,
+                    message: "Operator skill is unavailable or incompatible; select it again."
+                        .into(),
+                },
+            });
+            let screen = draw_text(&mut d, 140, 35);
+            assert!(
+                screen.contains("unavailable or incompatible")
+                    && screen.contains("/skill:ovrcr-status keep this request"),
+                "{screen}"
+            );
+        }
+    }
+}
+
 fn with_model(mut value: OperatorConversationSummary) -> OperatorConversationSummary {
     value.model = Some(OperatorModel {
         provider: "openai".into(),
@@ -143,6 +392,7 @@ fn user(ordinal: u64, text: &str, context: OperatorContext) -> OperatorMessage {
     message(
         ordinal,
         OperatorMessageContent::User {
+            skill: None,
             text: text.into(),
             context,
         },
@@ -577,6 +827,7 @@ fn dock_distinguishes_sending_tools_stopping_and_turn_outcomes() {
                 2,
                 1,
                 OperatorMessageContent::User {
+                    skill: None,
                     text: "inspect the tree".into(),
                     context: context.clone(),
                 },
@@ -1392,6 +1643,7 @@ fn submission_freezes_context_and_only_acceptance_clears_that_draft() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "hello\n界".into(),
@@ -1565,6 +1817,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "to the selected target".into(),
@@ -1609,6 +1862,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "full composer request".into(),
@@ -1649,6 +1903,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(1),
             text: "to the selected target".into(),
@@ -1699,6 +1954,7 @@ fn reopening_either_composer_captures_the_selected_target_for_the_next_send() {
     assert_eq!(
         submit.request,
         Request::Operator(OperatorRequest::Submit {
+            skill: None,
             conversation: OperatorConversationId(7),
             expected_run: SessionRunId(2),
             text: "quick over the full view".into(),
@@ -2004,6 +2260,7 @@ fn quick_creates_nothing_when_cancelled_and_shares_the_one_draft() {
             matches!(
                 &message.request,
                 Request::Operator(OperatorRequest::Submit {
+                    skill: None,
                     conversation: OperatorConversationId(7),
                     expected_run: SessionRunId(1),
                     text,
@@ -3153,6 +3410,7 @@ fn request_journal() -> Vec<OperatorMessage> {
             2,
             1,
             OperatorMessageContent::User {
+                skill: None,
                 text: "set it up".into(),
                 context: OperatorContext::default(),
             },
@@ -3345,6 +3603,7 @@ fn older_requests_collapse_when_a_new_one_starts_and_narrow_rows_stay_clipped() 
         3,
         10,
         OperatorMessageContent::User {
+            skill: None,
             text: "and a second request with a long sentence that cannot fit a narrow pane".into(),
             context: OperatorContext::default(),
         },
@@ -3417,6 +3676,7 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
                     2,
                     1,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "long task".into(),
                         context: context.clone(),
                     },
@@ -3525,6 +3785,7 @@ fn compaction_activity_is_transient_and_scoped_to_the_running_turn() {
                 3,
                 8,
                 OperatorMessageContent::User {
+                    skill: None,
                     text: "next task".into(),
                     context,
                 },
@@ -3834,6 +4095,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 1,
                     turn: OperatorTurnId(1),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "first".into(),
                         context: OperatorContext::default(),
                     },
@@ -3858,6 +4120,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 4,
                     turn: OperatorTurnId(2),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "second".into(),
                         context: OperatorContext::default(),
                     },
@@ -3882,6 +4145,7 @@ fn slash_copy_emits_raw_markdown_osc52_and_reports_empty_or_oversized_replies() 
                     ordinal: 7,
                     turn: OperatorTurnId(3),
                     content: OperatorMessageContent::User {
+                        skill: None,
                         text: "third interrupted".into(),
                         context: OperatorContext::default(),
                     },
@@ -5310,6 +5574,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                     3,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "check beta latency".into(),
                         context: OperatorContext::default(),
                     },
@@ -5567,6 +5832,7 @@ fn tree_slash_command_inspects_searches_filters_switches_rewinds_and_refuses_whe
                     2,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "restart alpha worker".into(),
                         context: OperatorContext::default(),
                     },
@@ -5818,6 +6084,7 @@ fn tree_summarize_branch_modal_supports_esc_back_navigation_custom_prompt_compos
                     3,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "check beta latency".into(),
                         context: OperatorContext::default(),
                     },
@@ -6269,6 +6536,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     1,
                     1,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "completed question".into(),
                         context: OperatorContext::default(),
                     },
@@ -6293,6 +6561,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     2,
                     4,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "failed question".into(),
                         context: OperatorContext::default(),
                     },
@@ -6313,6 +6582,7 @@ fn review_fixes_copy_completed_only_tree_ctrl_u_keymap_and_copy_notice_clear() {
                     3,
                     7,
                     OperatorMessageContent::User {
+                        skill: None,
                         text: "interrupted question".into(),
                         context: OperatorContext::default(),
                     },
