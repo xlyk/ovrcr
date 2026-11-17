@@ -404,7 +404,7 @@ async function runTool(step, execute) {
   const admission = await askConfirm("OVRCR Operator tool admission", {
     toolCallId: call.id,
     toolName: call.name,
-    input: call.input,
+    input: step.admission_input ?? call.input,
   });
   const granted = admission?.confirmed === true;
   record({ event: "admission", id: call.id, confirmed: granted, cancelled: admission?.cancelled === true });

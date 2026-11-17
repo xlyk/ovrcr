@@ -1834,6 +1834,67 @@ fn admissions_are_sequential_and_no_command_runs_after_a_refusal() {
     assert_eq!(executed[0]["id"], "call-one");
 }
 
+/// Pi 1.3.0 fills omitted optional `read` arguments with null in the
+/// tool_call event while the assistant message omits them (or the reverse).
+#[test]
+fn a_null_filled_admission_input_is_admitted_and_journals_the_models_arguments() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::ToolWithAdmissionInput {
+            id: "call-read".into(),
+            name: "read".into(),
+            input: json!({"path": "README.md"}),
+            admission_input: json!({"path": "README.md", "offset": null, "limit": null}),
+            output: "readme".into(),
+        },
+        Step::assistant("read done"),
+        Step::Settle,
+    ]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "read the readme");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Complete,
+        "{history:#?}"
+    );
+    let calls = harness::tool_calls(&history);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].2, r#"{"path":"README.md"}"#);
+    assert_eq!(fake.events("admission")[0]["confirmed"], true);
+}
+
+#[test]
+fn an_admission_input_that_differs_from_the_models_call_is_refused_by_name() {
+    let mut scenario = Scenario::new();
+    scenario.steps(vec![
+        Step::ToolWithAdmissionInput {
+            id: "call-read".into(),
+            name: "read".into(),
+            input: json!({"path": "README.md"}),
+            admission_input: json!({"path": "/etc/passwd"}),
+            output: "secret".into(),
+        },
+        Step::Settle,
+    ]);
+    let (_live, fake, mut client) = worker_fixture(&scenario);
+    let opened = client.open();
+    client.submit_turn(&opened, "read the readme");
+    let history = client.wait_terminal(opened.id);
+    assert_eq!(
+        history.conversation.current_turn.as_ref().unwrap().state,
+        OperatorTurnState::Error
+    );
+    assert_eq!(
+        failed_text(&history).as_deref(),
+        Some("Pi tool arguments differ from the model's call; the tool was refused.")
+    );
+    assert!(harness::tool_calls(&history).is_empty());
+    assert_eq!(fake.events("admission")[0]["confirmed"], false);
+    assert!(fake.events("executed").is_empty());
+}
+
 #[test]
 fn a_result_for_an_unadmitted_call_is_refused_without_effects() {
     let dir = tempfile::tempdir().unwrap();

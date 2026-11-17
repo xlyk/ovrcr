@@ -213,6 +213,15 @@ pub enum Step {
         truncated: bool,
         marker: Option<PathBuf>,
     },
+    /// One tool call whose admission dialog carries `admission_input` instead
+    /// of the assistant message's arguments (Pi versions differ in null-filling).
+    ToolWithAdmissionInput {
+        id: String,
+        name: String,
+        input: Value,
+        admission_input: Value,
+        output: String,
+    },
     /// A second admission offered before the first result is settled.
     SecondAdmission {
         id: String,
@@ -363,6 +372,20 @@ impl Step {
                 "status": status,
                 "truncated": truncated,
                 "marker": marker.map(|path| path.display().to_string()),
+            }),
+            Self::ToolWithAdmissionInput {
+                id,
+                name,
+                input,
+                admission_input,
+                output,
+            } => json!({
+                "kind": "tool",
+                "id": id,
+                "name": name,
+                "input": input,
+                "admission_input": admission_input,
+                "output": output,
             }),
             Self::SecondAdmission {
                 id,
