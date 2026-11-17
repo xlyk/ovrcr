@@ -34,7 +34,7 @@ work lease, that process stays live across warm user turns on the same run.
 
 `OVRCR_PI_EXECUTABLE`, when set and nonempty, names the pi executable; otherwise
 `pi` is resolved on `PATH`. A missing executable is reported as
-`Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.` and no turn
+`Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.` and no turn
 proceeds.
 
 ## Dedicated profile
@@ -435,7 +435,7 @@ required-extension errors fail the turn.
 
 Fixed user-facing failures, never with native stderr or provider bodies:
 
-- `Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.`
+- `Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.`
 - `No Pi model selected; run ovrcr operator setup.`
 - `Configured Operator model is unavailable in the dedicated Pi profile.`
 - `Operator Pi context is unavailable; saved data was preserved.`

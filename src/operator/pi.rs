@@ -121,9 +121,7 @@ impl PiError {
 
     pub fn user_message(&self) -> &'static str {
         match self.kind {
-            PiErrorKind::Unavailable => {
-                "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE."
-            }
+            PiErrorKind::Unavailable => "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.",
             PiErrorKind::NoModel => "No Pi model selected; run ovrcr operator setup.",
             PiErrorKind::ModelUnavailable => {
                 "Configured Operator model is unavailable in the dedicated Pi profile."
@@ -1317,7 +1315,7 @@ mod tests {
         let cases = [
             (
                 PiError::unavailable("x"),
-                "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+                "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.",
             ),
             (
                 PiError::no_model(),

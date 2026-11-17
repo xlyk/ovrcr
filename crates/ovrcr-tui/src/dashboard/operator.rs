@@ -4133,7 +4133,7 @@ mod tests {
             ),
             (
                 2,
-                "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.",
+                "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.",
             ),
         ] {
             let chat = d.operator.chat.as_mut().unwrap();

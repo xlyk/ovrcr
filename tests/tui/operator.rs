@@ -749,7 +749,7 @@ fn sidebar_stays_off_while_opening_and_recognizes_known_setup_failures() {
         request_id: open.request_id,
         response: Response::Error {
             code: ErrorCode::InvalidRequest,
-            message: "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.".into(),
+            message: "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.".into(),
         },
     });
     let dock = dock_row(&rendered_rows(&dashboard, 120, 40));
@@ -1550,7 +1550,7 @@ fn header_names_pi_and_only_a_really_selected_model() {
             vec![message(
                 1,
                 OperatorMessageContent::Worker(OperatorWorkerEvent::Failed(
-                    "Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE.".into(),
+                    "Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE.".into(),
                 )),
             )],
             None,
@@ -1558,7 +1558,7 @@ fn header_names_pi_and_only_a_really_selected_model() {
     );
     let screen = draw_text(&mut dashboard, 120, 40);
     assert!(
-        screen.contains("Pi is unavailable; install pi 0.87.1 or set OVRCR_PI_EXECUTABLE."),
+        screen.contains("Pi is unavailable; install pi or set OVRCR_PI_EXECUTABLE."),
         "{screen}"
     );
 }
